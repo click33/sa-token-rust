@@ -11,7 +11,7 @@ fn stp_util_manager() -> Arc<sa_token_core::SaTokenManager> {
     static MGR: OnceLock<Arc<sa_token_core::SaTokenManager>> = OnceLock::new();
     MGR.get_or_init(|| {
         let mgr = setup::fresh_manager();
-        StpUtil::init_manager(mgr.as_ref().clone());
+        let _ = StpUtil::try_init_manager(mgr.as_ref().clone());
         mgr
     })
     .clone()
@@ -20,8 +20,8 @@ fn stp_util_manager() -> Arc<sa_token_core::SaTokenManager> {
 #[tokio::test]
 async fn test_multi_account_isolation() {
     let mgr = setup::fresh_manager();
-    let admin = SaLogic::new("admin", mgr.clone());
-    let user = SaLogic::new("user", mgr.clone());
+    let admin = SaLogic::new("admin", mgr.as_ref().clone());
+    let user = SaLogic::new("user", mgr.as_ref().clone());
 
     let admin_token = admin.login("10001").await.unwrap();
     let user_token = user.login("10001").await.unwrap();
@@ -47,14 +47,20 @@ async fn test_multi_account_isolation() {
         vec!["user:read".to_string()]
     );
 
-    assert_eq!(admin.get_terminal_list("10001", None).await.unwrap().len(), 1);
-    assert_eq!(user.get_terminal_list("10001", None).await.unwrap().len(), 1);
+    assert_eq!(
+        admin.get_terminal_list("10001", None).await.unwrap().len(),
+        1
+    );
+    assert_eq!(
+        user.get_terminal_list("10001", None).await.unwrap().len(),
+        1
+    );
 }
 
 #[tokio::test]
 async fn test_terminal_end_to_end() {
     let mgr = setup::fresh_manager();
-    let admin = SaLogic::new("admin", mgr);
+    let admin = SaLogic::new("admin", mgr.as_ref().clone());
 
     let pc_token = admin
         .login_with_device("10001", Some("PC".to_string()), None)
@@ -66,7 +72,11 @@ async fn test_terminal_end_to_end() {
         .unwrap();
 
     assert_eq!(
-        admin.get_terminal_list("10001", Some("PC")).await.unwrap().len(),
+        admin
+            .get_terminal_list("10001", Some("PC"))
+            .await
+            .unwrap()
+            .len(),
         1
     );
     assert_eq!(
@@ -91,7 +101,7 @@ async fn test_terminal_end_to_end() {
 #[tokio::test]
 async fn test_terminal_index_monotonic() {
     let mgr = setup::fresh_manager();
-    let admin = SaLogic::new("admin", mgr);
+    let admin = SaLogic::new("admin", mgr.as_ref().clone());
 
     let t1 = admin.login("10001").await.unwrap();
     let t2 = admin.login("10001").await.unwrap();
@@ -132,13 +142,18 @@ async fn test_default_account_backward_compatible() {
 }
 
 #[tokio::test]
-async fn test_stp_logic_registry() {
+async fn test_stp_logic_facade_clone() {
     let mgr = stp_util_manager();
 
-    let logic = Arc::new(SaLogic::new("shop", mgr));
-    StpUtil::put_stp_logic(logic);
-    assert!(sa_token_core::stp_logic::try_get_stp_logic("shop").is_some());
+    let logic = SaLogic::new("shop", mgr.as_ref().clone());
+    let via_util = StpUtil::stp_logic("shop").unwrap();
+    assert_eq!(logic.login_type(), "shop");
+    assert_eq!(via_util.login_type(), "shop");
 
-    StpUtil::remove_stp_logic("shop");
-    assert!(sa_token_core::stp_logic::try_get_stp_logic("shop").is_none());
+    // Deprecated no-ops still compile for migration compatibility.
+    #[allow(deprecated)]
+    {
+        StpUtil::put_stp_logic(logic.clone());
+        StpUtil::remove_stp_logic("shop");
+    }
 }

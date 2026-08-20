@@ -2,6 +2,7 @@
 name = "sa-token-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -12,7 +13,7 @@ categories.workspace = true
 description = "Core library for sa-token-rust, a powerful authentication and authorization framework"
 
 [dependencies]
-sa-token-adapter = { version = "0.1.18", path = "../sa-token-adapter" }
+sa-token-adapter = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -26,6 +27,23 @@ chrono = { workspace = true }
 tracing = { workspace = true }
 urlencoding = { workspace = true }
 hex = "0.4.3"
+getrandom = { workspace = true }
+base64 = { workspace = true }
+argon2 = { workspace = true }
+hmac = { workspace = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
-sa-token-storage-memory = { version = "0.1.18", path = "../sa-token-storage-memory" }
+sa-token-storage-memory = { workspace = true }
+
+[features]
+default = []
+fory = ["sa-token-adapter/fory"]
+sso-http = ["dep:reqwest"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

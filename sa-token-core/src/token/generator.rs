@@ -1,219 +1,198 @@
-// Author: 金书记
-//
+// Author: 金书记 | Author: Jin Shuji
 //! Token Generator | Token 生成器
 //!
 //! Supports multiple token styles including UUID, Random, and JWT
 //! 支持多种 Token 风格，包括 UUID、随机字符串和 JWT
 
-use uuid::Uuid;
-use crate::config::{TokenStyle, SaTokenConfig};
+use crate::config::{SaTokenConfig, TokenStyle};
+use crate::error::{SaTokenError, SaTokenResult};
 use crate::token::TokenValue;
-use crate::token::jwt::{JwtManager, JwtClaims, JwtAlgorithm};
+use crate::token::csprng::{fill_bytes, random_hex, random_tik};
+use crate::token::jwt::{JwtAlgorithm, JwtClaims, JwtManager};
 use chrono::Utc;
-use sha2::{Sha256, Sha512, Digest};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
+/// Token value generator | Token 值生成器
 pub struct TokenGenerator;
 
 impl TokenGenerator {
     /// Generate token based on configuration | 根据配置生成 token
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `config` - Sa-token configuration | Sa-token 配置
-    /// * `login_id` - User login ID (required for JWT) | 用户登录ID（JWT 必需）
-    pub fn generate_with_login_id(config: &SaTokenConfig, login_id: &str) -> TokenValue {
+    pub fn generate_with_login_id(
+        config: &SaTokenConfig,
+        login_id: &str,
+    ) -> SaTokenResult<TokenValue> {
         match config.token_style {
-            TokenStyle::Uuid => Self::generate_uuid(),
-            TokenStyle::SimpleUuid => Self::generate_simple_uuid(),
-            TokenStyle::Random32 => Self::generate_random(32),
-            TokenStyle::Random64 => Self::generate_random(64),
-            TokenStyle::Random128 => Self::generate_random(128),
+            TokenStyle::Uuid => Ok(Self::generate_uuid()),
+            TokenStyle::SimpleUuid => Ok(Self::generate_simple_uuid()),
+            TokenStyle::Random32 => Self::generate_random_csprng(32),
+            TokenStyle::Random64 => Self::generate_random_csprng(64),
+            TokenStyle::Random128 => Self::generate_random_csprng(128),
             TokenStyle::Jwt => Self::generate_jwt(config, login_id),
             TokenStyle::Hash => Self::generate_hash(login_id),
             TokenStyle::Timestamp => Self::generate_timestamp(),
             TokenStyle::Tik => Self::generate_tik(),
         }
     }
-    
+
     /// Generate token with login_id and extra data | 根据配置生成带有额外数据的 token
-    ///
-    /// 当 token_style 为 JWT 时，extra_data 会被签名到 JWT Claims 中。
-    /// 其他风格不支持在 token 本身携带数据，extra_data 仅存储在 storage 中。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `config` - Sa-token configuration | Sa-token 配置
-    /// * `login_id` - User login ID | 用户登录ID
-    /// * `extra_data` - Extra data to sign into JWT | 要签名到 JWT 中的额外数据
     pub fn generate_with_login_id_and_extra(
         config: &SaTokenConfig,
         login_id: &str,
         extra_data: &serde_json::Value,
-    ) -> TokenValue {
+    ) -> SaTokenResult<TokenValue> {
         match config.token_style {
             TokenStyle::Jwt => Self::generate_jwt_with_extra(config, login_id, extra_data),
-            // 非 JWT 风格无法在 token 中携带 extra 数据，走原有生成逻辑
             _ => Self::generate_with_login_id(config, login_id),
         }
     }
-    
+
     /// Generate token (backward compatible) | 根据配置生成 token（向后兼容）
-    pub fn generate(config: &SaTokenConfig) -> TokenValue {
+    pub fn generate(config: &SaTokenConfig) -> SaTokenResult<TokenValue> {
         Self::generate_with_login_id(config, "")
     }
-    
+
     /// 生成 UUID 风格的 token
     pub fn generate_uuid() -> TokenValue {
         TokenValue::new(Uuid::new_v4().to_string())
     }
-    
+
     /// 生成简化的 UUID（去掉横杠）
     pub fn generate_simple_uuid() -> TokenValue {
         TokenValue::new(Uuid::new_v4().simple().to_string())
     }
-    
-    /// 生成随机字符串
-    pub fn generate_random(length: usize) -> TokenValue {
-        let uuid = Uuid::new_v4();
-        let random_bytes = uuid.as_bytes();
-        let hash = Sha512::digest(random_bytes);
-        let hex_string = hex::encode(hash);
-        TokenValue::new(hex_string[..length.min(hex_string.len())].to_string())
+
+    /// Hex token whose entropy is `length/2` bytes of OS CSPRNG (not a hash of a UUID).
+    /// hex token，熵来自 `length/2` 字节操作系统随机数（不是 UUID 的哈希）。
+    pub fn generate_random_csprng(length: usize) -> SaTokenResult<TokenValue> {
+        Ok(TokenValue::new(random_hex(length)?))
     }
-    
+
+    /// Old name kept as a wrapper so call sites can migrate in one commit.
+    /// 保留旧名作为包装，便于调用点一次改完。
+    pub fn generate_random(length: usize) -> SaTokenResult<TokenValue> {
+        Self::generate_random_csprng(length)
+    }
+
     /// Generate JWT token | 生成 JWT token
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `config` - Sa-token configuration | Sa-token 配置
-    /// * `login_id` - User login ID | 用户登录ID
-    pub fn generate_jwt(config: &SaTokenConfig, login_id: &str) -> TokenValue {
-        // 如果 login_id 为空，则使用时间戳作为 login_id
+    pub fn generate_jwt(config: &SaTokenConfig, login_id: &str) -> SaTokenResult<TokenValue> {
+        let secret = require_jwt_secret(config)?;
         let effective_login_id = if login_id.is_empty() {
             Utc::now().timestamp_millis().to_string()
         } else {
             login_id.to_string()
         };
-        
-        // Get JWT secret key | 获取 JWT 密钥
-        let secret = config.jwt_secret_key.as_ref()
-            .expect("JWT secret key is required when using JWT token style");
-        
-        // Parse algorithm | 解析算法
-        let algorithm = config.jwt_algorithm.as_ref()
+        let algorithm = config
+            .jwt_algorithm
+            .as_ref()
             .and_then(|alg| Self::parse_jwt_algorithm(alg))
             .unwrap_or(JwtAlgorithm::HS256);
-        
-        // Create JWT manager | 创建 JWT 管理器
         let mut jwt_manager = JwtManager::with_algorithm(secret, algorithm);
-        
         if let Some(ref issuer) = config.jwt_issuer {
             jwt_manager = jwt_manager.set_issuer(issuer);
         }
-        
         if let Some(ref audience) = config.jwt_audience {
             jwt_manager = jwt_manager.set_audience(audience);
         }
-        
-        // Create claims | 创建声明
         let mut claims = JwtClaims::new(effective_login_id);
-        
-        // Set expiration | 设置过期时间
         if config.timeout > 0 {
             claims.set_expiration(config.timeout);
         }
-        
-        // Generate JWT token | 生成 JWT token
         match jwt_manager.generate(&claims) {
-            Ok(token) => TokenValue::new(token),
-            Err(e) => {
-                if config.jwt_fallback_on_error {
-                    tracing::warn!(error = %e, "Failed to generate JWT token, falling back to UUID");
-                    Self::generate_uuid()
-                } else {
-                    tracing::error!(error = %e, "Failed to generate JWT token and jwt_fallback_on_error=false");
-                    Self::generate_uuid()
-                }
+            Ok(token) => Ok(TokenValue::new(token)),
+            Err(e) if config.jwt_fallback_on_error => {
+                tracing::warn!(error = %e, "JWT generation failed, falling back to UUID");
+                Ok(Self::generate_uuid())
             }
+            Err(e) => Err(SaTokenError::ConfigError(format!(
+                "JWT generation failed: {e}"
+            ))),
         }
     }
-    
+
     /// Generate JWT token with extra data signed into claims | 生成带有额外数据签名的 JWT token
-    ///
-    /// 与 `generate_jwt` 类似，但会将 `extra_data` 写入 JWT Claims 中，
-    /// 使得 extra 数据成为 token 签名的一部分。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `config` - Sa-token configuration | Sa-token 配置
-    /// * `login_id` - User login ID | 用户登录ID
-    /// * `extra_data` - Extra data to embed in JWT claims | 要签入 JWT 声明的额外数据
     pub fn generate_jwt_with_extra(
         config: &SaTokenConfig,
         login_id: &str,
         extra_data: &serde_json::Value,
-    ) -> TokenValue {
+    ) -> SaTokenResult<TokenValue> {
+        let secret = require_jwt_secret(config)?;
         let effective_login_id = if login_id.is_empty() {
             Utc::now().timestamp_millis().to_string()
         } else {
             login_id.to_string()
         };
-        
-        let secret = config.jwt_secret_key.as_ref()
-            .expect("JWT secret key is required when using JWT token style");
-        
-        let algorithm = config.jwt_algorithm.as_ref()
+        let algorithm = config
+            .jwt_algorithm
+            .as_ref()
             .and_then(|alg| Self::parse_jwt_algorithm(alg))
             .unwrap_or(JwtAlgorithm::HS256);
-        
         let mut jwt_manager = JwtManager::with_algorithm(secret, algorithm);
-        
         if let Some(ref issuer) = config.jwt_issuer {
             jwt_manager = jwt_manager.set_issuer(issuer);
         }
-        
         if let Some(ref audience) = config.jwt_audience {
             jwt_manager = jwt_manager.set_audience(audience);
         }
-        
         let mut claims = JwtClaims::new(effective_login_id);
-        
         if config.timeout > 0 {
             claims.set_expiration(config.timeout);
         }
-        
-        // 将 extra_data 写入 JWT claims
-        // If extra_data is an Object, flatten each key-value into claims.extra
-        // Otherwise, store the entire value under "extra" key
         match extra_data {
             serde_json::Value::Object(map) => {
                 for (key, value) in map {
                     claims.add_claim(key.clone(), value.clone());
                 }
             }
-            serde_json::Value::Null => {
-                // Null 值不写入
-            }
+            serde_json::Value::Null => {}
             other => {
                 claims.add_claim("extra", other.clone());
             }
         }
-        
         match jwt_manager.generate(&claims) {
-            Ok(token) => TokenValue::new(token),
-            Err(e) => {
-                if config.jwt_fallback_on_error {
-                    tracing::warn!(error = %e, "Failed to generate JWT token with extra, falling back to UUID");
-                    Self::generate_uuid()
-                } else {
-                    tracing::error!(error = %e, "Failed to generate JWT token with extra and jwt_fallback_on_error=false");
-                    Self::generate_uuid()
-                }
+            Ok(token) => Ok(TokenValue::new(token)),
+            Err(e) if config.jwt_fallback_on_error => {
+                tracing::warn!(error = %e, "JWT generation with extra failed, falling back to UUID");
+                Ok(Self::generate_uuid())
             }
+            Err(e) => Err(SaTokenError::ConfigError(format!(
+                "JWT generation failed: {e}"
+            ))),
         }
     }
-    
-    /// Parse JWT algorithm from string | 从字符串解析 JWT 算法
+
+    /// Generate Hash style token | 生成 Hash 风格 token
+    pub fn generate_hash(login_id: &str) -> SaTokenResult<TokenValue> {
+        let login_id_value = if login_id.is_empty() {
+            Utc::now().timestamp_millis().to_string()
+        } else {
+            login_id.to_string()
+        };
+        let mut salt = [0u8; 16];
+        fill_bytes(&mut salt)?;
+        let data = format!(
+            "{}{}{}",
+            login_id_value,
+            Utc::now().timestamp_millis(),
+            hex::encode(salt)
+        );
+        let mut hasher = Sha256::new();
+        hasher.update(data.as_bytes());
+        Ok(TokenValue::new(hex::encode(hasher.finalize())))
+    }
+
+    /// Generate Timestamp style token | 生成时间戳风格 token
+    pub fn generate_timestamp() -> SaTokenResult<TokenValue> {
+        let timestamp = Utc::now().timestamp_millis();
+        let suffix = random_hex(16)?;
+        Ok(TokenValue::new(format!("{timestamp}_{suffix}")))
+    }
+
+    /// Generate Tik style token | 生成 Tik 风格 token
+    pub fn generate_tik() -> SaTokenResult<TokenValue> {
+        Ok(TokenValue::new(random_tik(8)?))
+    }
+
     fn parse_jwt_algorithm(alg: &str) -> Option<JwtAlgorithm> {
         match alg.to_uppercase().as_str() {
             "HS256" => Some(JwtAlgorithm::HS256),
@@ -227,87 +206,56 @@ impl TokenGenerator {
             _ => None,
         }
     }
-    
-    /// Generate Hash style token | 生成 Hash 风格 token
-    ///
-    /// Uses SHA256 hash of login_id + timestamp + random UUID
-    /// 使用 SHA256 哈希：login_id + 时间戳 + 随机 UUID
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `login_id` - User login ID | 用户登录ID
-    pub fn generate_hash(login_id: &str) -> TokenValue {
-        // 如果 login_id 为空，使用时间戳代替
-        let login_id_value = if login_id.is_empty() {
-            Utc::now().timestamp_millis().to_string()
-        } else {
-            login_id.to_string()
-        };
-        
-        let timestamp = Utc::now().timestamp_millis();
-        let uuid = Uuid::new_v4();
-        let data = format!("{}{}{}", login_id_value, timestamp, uuid);
-        
-        let mut hasher = Sha256::new();
-        hasher.update(data.as_bytes());
-        let result = hasher.finalize();
-        let hash = hex::encode(result);
-        
-        TokenValue::new(hash)
+}
+
+impl std::fmt::Debug for TokenGenerator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("TokenGenerator { .. }")
     }
-    
-    /// Generate Timestamp style token | 生成时间戳风格 token
-    ///
-    /// Format: timestamp_milliseconds + 16-char random suffix
-    /// 格式：毫秒级时间戳 + 16位随机后缀
-    ///
-    /// Example: 1760403556789_a3b2c1d4e5f6g7h8
-    /// 示例：1760403556789_a3b2c1d4e5f6g7h8
-    pub fn generate_timestamp() -> TokenValue {
-        use chrono::Utc;
-        use sha2::{Sha256, Digest};
-        
-        let timestamp = Utc::now().timestamp_millis();
-        let uuid = Uuid::new_v4();
-        
-        // Generate random suffix | 生成随机后缀
-        let mut hasher = Sha256::new();
-        hasher.update(uuid.as_bytes());
-        let result = hasher.finalize();
-        let suffix = hex::encode(&result[..8]); // 16 characters
-        
-        TokenValue::new(format!("{}_{}", timestamp, suffix))
+}
+
+fn require_jwt_secret(config: &SaTokenConfig) -> SaTokenResult<&str> {
+    match config.jwt_secret_key.as_deref() {
+        Some(s) if !s.trim().is_empty() => Ok(s),
+        _ => Err(SaTokenError::ConfigError(
+            "jwt_secret_key is required when token_style=Jwt".into(),
+        )),
     }
-    
-    /// Generate Tik style token | 生成 Tik 风格 token
-    ///
-    /// Short 8-character alphanumeric token (URL-safe)
-    /// 短小精悍的8位字母数字 token（URL安全）
-    ///
-    /// Character set: A-Z, a-z, 0-9 (62 characters)
-    /// 字符集：A-Z, a-z, 0-9（62个字符）
-    ///
-    /// Example: aB3dE9fG
-    /// 示例：aB3dE9fG
-    pub fn generate_tik() -> TokenValue {
-        use sha2::{Sha256, Digest};
-        
-        const CHARSET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        const TOKEN_LENGTH: usize = 8;
-        
-        let uuid = Uuid::new_v4();
-        let mut hasher = Sha256::new();
-        hasher.update(uuid.as_bytes());
-        let hash = hasher.finalize();
-        
-        let mut token = String::with_capacity(TOKEN_LENGTH);
-        for i in 0..TOKEN_LENGTH {
-            let idx = (hash[i] as usize) % CHARSET.len();
-            token.push(CHARSET[idx] as char);
+}
+
+/// Generate until `occupied` is false, or until `max_try_times` is exhausted.
+/// `max_try_times < 0`：create once and return (no uniqueness probe).
+/// `max_try_times == 0`：treated as `-1`.
+///
+/// 直到 `occupied` 为 false 或次数用尽。
+/// `max_try_times < 0`：只生成一次、不做占用探测。
+/// `max_try_times == 0`：与 `-1` 相同。
+pub async fn generate_unique<C, F, Fut>(
+    max_try_times: i32,
+    mut create: C,
+    mut occupied: F,
+) -> SaTokenResult<TokenValue>
+where
+    C: FnMut() -> SaTokenResult<TokenValue>,
+    F: FnMut(&str) -> Fut,
+    Fut: Future<Output = SaTokenResult<bool>>,
+{
+    if max_try_times <= 0 {
+        return create();
+    }
+    let mut last = create()?;
+    for _ in 0..max_try_times {
+        if !occupied(last.as_str()).await? {
+            return Ok(last);
         }
-        
-        TokenValue::new(token)
+        last = create()?;
     }
+    if !occupied(last.as_str()).await? {
+        return Ok(last);
+    }
+    Err(SaTokenError::ConfigError(format!(
+        "failed to generate a unique token after {max_try_times} attempts"
+    )))
 }
 
 #[cfg(test)]
@@ -334,10 +282,9 @@ mod tests {
             "permissions": ["read", "write"]
         });
 
-        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_123", &extra);
+        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_123", &extra).unwrap();
         assert!(!token.as_str().is_empty());
 
-        // 解析 JWT 验证 extra 数据已签入
         let jwt_manager = JwtManager::new("test-secret-key-for-jwt");
         let claims = jwt_manager.validate(token.as_str()).unwrap();
 
@@ -355,7 +302,7 @@ mod tests {
         let config = jwt_config();
         let extra = serde_json::json!("simple_string_value");
 
-        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_456", &extra);
+        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_456", &extra).unwrap();
 
         let jwt_manager = JwtManager::new("test-secret-key-for-jwt");
         let claims = jwt_manager.validate(token.as_str()).unwrap();
@@ -372,7 +319,7 @@ mod tests {
         let config = jwt_config();
         let extra = serde_json::Value::Null;
 
-        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_789", &extra);
+        let token = TokenGenerator::generate_jwt_with_extra(&config, "user_789", &extra).unwrap();
 
         let jwt_manager = JwtManager::new("test-secret-key-for-jwt");
         let claims = jwt_manager.validate(token.as_str()).unwrap();
@@ -386,9 +333,9 @@ mod tests {
         let config = jwt_config();
         let extra = serde_json::json!({"key": "value"});
 
-        let token = TokenGenerator::generate_with_login_id_and_extra(&config, "user_jwt", &extra);
+        let token =
+            TokenGenerator::generate_with_login_id_and_extra(&config, "user_jwt", &extra).unwrap();
 
-        // JWT token 包含两个 '.' 分隔符
         assert!(token.as_str().contains('.'));
 
         let jwt_manager = JwtManager::new("test-secret-key-for-jwt");
@@ -404,13 +351,11 @@ mod tests {
         };
         let extra = serde_json::json!({"key": "value"});
 
-        // 非 JWT 风格应该走正常生成逻辑，不 panic
-        let token = TokenGenerator::generate_with_login_id_and_extra(&config, "user_uuid", &extra);
+        let token =
+            TokenGenerator::generate_with_login_id_and_extra(&config, "user_uuid", &extra).unwrap();
         assert!(!token.as_str().is_empty());
-        // UUID 格式不包含 '.'
         assert!(!token.as_str().contains('.'));
     }
-
 
     #[test]
     fn test_random_32_length() {
@@ -418,7 +363,7 @@ mod tests {
             token_style: TokenStyle::Random32,
             ..SaTokenConfig::default()
         };
-        let token = TokenGenerator::generate_with_login_id(&config, "user_random");
+        let token = TokenGenerator::generate_with_login_id(&config, "user_random").unwrap();
         assert!(!token.as_str().is_empty());
         assert_eq!(token.as_str().len(), 32);
     }
@@ -429,18 +374,18 @@ mod tests {
             token_style: TokenStyle::Random64,
             ..SaTokenConfig::default()
         };
-        let token = TokenGenerator::generate_with_login_id(&config, "user_random");
+        let token = TokenGenerator::generate_with_login_id(&config, "user_random").unwrap();
         assert!(!token.as_str().is_empty());
         assert_eq!(token.as_str().len(), 64);
     }
-    
+
     #[test]
     fn test_random_128_length() {
         let config = SaTokenConfig {
             token_style: TokenStyle::Random128,
             ..SaTokenConfig::default()
         };
-        let token = TokenGenerator::generate_with_login_id(&config, "user_random");
+        let token = TokenGenerator::generate_with_login_id(&config, "user_random").unwrap();
         assert!(!token.as_str().is_empty());
         assert_eq!(token.as_str().len(), 128);
     }

@@ -1,34 +1,35 @@
 // Author: 金书记
 //
 //! Event Listener Module | 事件监听模块
-//! 
+//!
 //! Provides event listening capabilities for sa-token, supporting monitoring of login, logout, kick-out, and other operations.
-//! 
+//!
 //! 提供 sa-token 的事件监听功能，支持监听登录、登出、踢出等操作。
-//! 
+//!
 //! ## EventBus Code Flow Logic | EventBus 代码流程逻辑
-//! 
+//!
 //! ### Overall Architecture | 整体架构
-//! 
+//!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────┐
 //! │                    SaTokenEventBus                          │
 //! │  ┌────────────────────────────────────────────────────┐    │
 //! │  │  listeners: Arc<RwLock<Vec<Arc<dyn SaTokenListener>>>>  │
-//! │  │  - Stores all registered listeners                 │
-//! │  │    存储所有注册的监听器                             │
-//! │  │  - Uses RwLock for thread safety                   │
-//! │  │    使用 RwLock 保证线程安全                        │
-//! │  │  - Arc wrapping allows multi-thread sharing        │
-//! │  │    Arc 包装允许多线程共享                          │
+//! │  │  config: EventBusConfig                            │    │
+//! │  │  - Stores all registered listeners                 │    │
+//! │  │    存储所有注册的监听器                             │    │
+//! │  │  - Uses RwLock for thread safety                   │    │
+//! │  │    使用 RwLock 保证线程安全                        │    │
+//! │  │  - Arc wrapping allows multi-thread sharing        │    │
+//! │  │    Arc 包装允许多线程共享                          │    │
 //! │  └────────────────────────────────────────────────────┘    │
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
-//! 
+//!
 //! ### Core Processes | 核心流程
-//! 
+//!
 //! #### 1. Listener Registration Process | 监听器注册流程
-//! 
+//!
 //! ```text
 //! ┌──────────┐     ┌──────────────┐     ┌─────────────┐
 //! │User Code │────▶│ register()   │────▶│Acquire Write│
@@ -42,7 +43,7 @@
 //!                                       │ - Release   │
 //!                                       │   释放写锁   │
 //!                                       └─────────────┘
-//! 
+//!
 //! Steps | 步骤：
 //! 1. User creates custom listener instance
 //!    用户创建自定义监听器实例
@@ -55,89 +56,25 @@
 //! 5. Registration complete, waiting for event triggers
 //!    监听器注册完成，等待事件触发
 //! ```
-//! 
-//! #### 2. Event Publishing Process | 事件发布流程
-//! 
+//!
+//! #### 2. Event Publishing Process (DispatchMode) | 事件发布流程 (分发模式)
+//!
 //! ```text
-//! ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-//! │SaTokenManager│────▶│ publish()    │────▶│Acquire Read  │
-//! │(login)       │     │              │     │Lock 读锁获取 │
-//! └──────────────┘     │ 1.Create     │     │              │
-//!                      │   event      │     │ 2.Iterate    │
-//!                      │   创建事件    │     │   listeners  │
-//!                      │ 2.Call       │     │   遍历监听器  │
-//!                      │   publish    │     │ 3.Invoke     │
-//!                      │   调用publish │     │   callbacks  │
-//!                      └──────────────┘     │   调用回调    │
-//!                             │             └──────────────┘
-//!                             ▼                     │
-//!                      ┌──────────────┐             ▼
-//!                      │ SaTokenEvent │     ┌──────────────┐
-//!                      │ - event_type │     │ Listener 1   │
-//!                      │ - login_id   │     │ on_login()   │
-//!                      │ - token      │     ├──────────────┤
-//!                      │ - timestamp  │     │ Listener 2   │
-//!                      └──────────────┘     │ on_login()   │
-//!                                          ├──────────────┤
-//!                                          │ Listener N   │
-//!                                          │ on_login()   │
-//!                                          └──────────────┘
-//! 
-//! Steps | 步骤：
-//! 1. After business operation (e.g., login) completes, create corresponding event object
-//!    业务操作（如 login）完成后，创建对应的事件对象
-//! 2. Call event_bus.publish(event).await
-//!    调用 event_bus.publish(event).await
-//! 3. EventBus acquires read lock, accesses listener list
-//!    EventBus 获取读锁，访问监听器列表
-//! 4. Call each listener's corresponding method in registration order
-//!    按注册顺序依次调用每个监听器的对应方法
-//! 5. After all listeners complete, event publishing process ends
-//!    所有监听器执行完成后，事件发布流程结束
+//! SaTokenManager::login OK
+//!        │
+//!        ▼
+//!  event = SaTokenEvent::login(login_id, token)
+//!        │
+//!        ▼
+//!  event_bus.publish(event)  ← dispatch by config.dispatch_mode
+//!        │
+//!        ├─[Sequential (default)]──── for each listener: spawn + timeout + await
+//!        ├─[Concurrent]───────────── spawn all + timeout + join_all
+//!        └─[Detached]─────────────── tokio::spawn, return immediately
 //! ```
-//! 
-//! #### 3. Event Dispatching Process | 事件分发流程
-//! 
-//! ```text
-//! ┌──────────────────┐
-//! │  publish(event)  │
-//! └────────┬─────────┘
-//!          │
-//!          ▼
-//! ┌──────────────────────────────────────┐
-//! │ 1. Get all listeners (read lock)     │
-//! │    获取所有监听器（读锁）              │
-//! └────────┬─────────────────────────────┘
-//!          │
-//!          ▼
-//! ┌──────────────────────────────────────┐
-//! │ 2. Iterate listener list             │
-//! │    遍历监听器列表                     │
-//! └────────┬─────────────────────────────┘
-//!          │
-//!          ├──▶ on_event(event)  ──▶ Generic event handler
-//!          │                         通用事件处理
-//!          │
-//!          └──▶ Dispatch by event type | 根据事件类型分发：
-//!               │
-//!               ├─ Login ──────▶ on_login(...)
-//!               ├─ Logout ─────▶ on_logout(...)
-//!               ├─ KickOut ────▶ on_kick_out(...)
-//!               ├─ RenewTimeout ▶ on_renew_timeout(...)
-//!               ├─ Replaced ───▶ on_replaced(...)
-//!               └─ Banned ─────▶ on_banned(...)
-//! 
-//! Notes | 注意：
-//! - Listeners execute in registration order
-//!   监听器按注册顺序执行
-//! - Each listener executes asynchronously
-//!   每个监听器都是异步执行的
-//! - Errors in listeners don't interrupt event propagation
-//!   监听器中的错误不会中断事件传播
-//! ```
-//! 
+//!
 //! ### Thread Safety Guarantees | 线程安全保证
-//! 
+//!
 //! ```text
 //! Arc<RwLock<Vec<Arc<dyn SaTokenListener>>>>
 //!  │    │     │    │
@@ -145,7 +82,7 @@
 //!  │    │     └────── Listener collection | 监听器集合
 //!  │    └──────────── Read-write lock protection | 读写锁保护
 //!  └───────────────── Cross-thread sharing | 跨线程共享
-//! 
+//!
 //! - Arc: Allows EventBus to be shared across multiple Manager instances
 //!        允许 EventBus 被多个 Manager 实例共享
 //! - RwLock: Allows multiple readers to publish events concurrently, writer has exclusive registration
@@ -153,73 +90,15 @@
 //! - Inner Arc: Listeners can be shared across multiple EventBus instances
 //!              监听器可以被多个 EventBus 共享
 //! ```
-//! 
-//! ### Complete Call Chain Example | 完整调用链示例
-//! 
-//! ```text
-//! User Code | 用户代码
-//!   │
-//!   └─▶ StpUtil::login("user_123")
-//!         │
-//!         └─▶ SaTokenManager::login(...)
-//!               │
-//!               ├─ 1. Generate token | 生成 token
-//!               ├─ 2. Save to storage | 保存到存储
-//!               └─ 3. Trigger event | 触发事件
-//!                     │
-//!                     └─▶ event_bus.publish(
-//!                           SaTokenEvent::login("user_123", "token_abc")
-//!                         )
-//!                           │
-//!                           ├─▶ LoggingListener::on_login()
-//!                           │     └─ Log to file | 记录日志
-//!                           │
-//!                           ├─▶ DatabaseListener::on_login()
-//!                           │     └─ Save to database | 保存到数据库
-//!                           │
-//!                           └─▶ StatisticsListener::on_login()
-//!                                 └─ Update statistics | 更新统计信息
-//! 
-//! After all listeners complete, login() returns token
-//! 所有监听器执行完成后，login() 方法返回 token
-//! ```
-//! 
-//! ### Performance Considerations | 性能考虑
-//! 
-//! 1. **Async Execution | 异步执行**: All listener methods are async, but execute sequentially
-//!    所有监听器方法都是异步的，但按顺序执行
-//! 2. **Read-Write Lock | 读写锁**: Multiple events can be published concurrently (read lock), registration requires exclusive access (write lock)
-//!    多个事件可以并发发布（读锁），注册需要独占（写锁）
-//! 3. **Zero-Copy | 零拷贝**: Event objects are passed by reference, avoiding unnecessary cloning
-//!    事件对象通过引用传递，避免不必要的克隆
-//! 4. **Error Isolation | 错误隔离**: Errors in one listener don't affect other listeners
-//!    单个监听器的错误不会影响其他监听器
-//! 
-//! ### Error Handling | 错误处理
-//! 
-//! ```text
-//! ┌────────────────┐
-//! │ Listener 1     │ ─▶ Success ✓ | 成功 ✓
-//! ├────────────────┤
-//! │ Listener 2     │ ─▶ Error ✗ (handled internally, doesn't affect others)
-//! │                │    错误 ✗ (内部处理，不影响后续)
-//! ├────────────────┤
-//! │ Listener 3     │ ─▶ Success ✓ (still executes) | 成功 ✓ (仍然执行)
-//! └────────────────┘
-//! 
-//! Recommendation | 建议：
-//! Listeners should catch all errors internally and handle them appropriately
-//! 监听器内部应捕获所有错误并适当处理
-//! ```
-//! 
+//!
 //! ## Usage Example | 使用示例
-//! 
+//!
 //! ```rust,ignore
 //! use sa_token_core::event::{SaTokenEvent, SaTokenListener, SaTokenEventBus};
-//! 
+//!
 //! // Custom listener | 自定义监听器
 //! struct MyListener;
-//! 
+//!
 //! #[async_trait]
 //! impl SaTokenListener for MyListener {
 //!     async fn on_login(&self, login_id: &str, token: &str, login_type: &str) {
@@ -232,58 +111,121 @@
 //!         // 用户 {} 登出了
 //!     }
 //! }
-//! 
+//!
 //! // Register listener | 注册监听器
 //! let event_bus = SaTokenEventBus::new();
 //! event_bus.register(Arc::new(MyListener)).await;
 //! ```
 
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::RwLock;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
+use std::time::Duration;
 
-/// 事件类型
+/// 事件类型 | Event Type
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SaTokenEventType {
-    /// 登录事件
+    /// 登录事件 | Login event
     Login,
-    /// 登出事件
+    /// 登出事件 | Logout event
     Logout,
-    /// 踢出下线事件
+    /// 踢出下线事件 | Kick out event
     KickOut,
-    /// Token 续期事件
+    /// Token 续期事件 | Token renewal event
     RenewTimeout,
-    /// 被顶下线事件（被其他设备登录）
+    /// 被顶下线事件（被其他设备登录）| Replaced by another login
     Replaced,
-    /// 被封禁事件
+    /// 被封禁事件 | Banned event
     Banned,
-    /// 开启二级认证
+    /// 解封事件 | Unbanned event
+    Unbanned,
+    /// 开启二级认证 | Open safe authentication
     OpenSafe,
-    /// 关闭二级认证
+    /// 关闭二级认证 | Close safe authentication
     CloseSafe,
+    /// 二级认证校验通过 | Safe verification passed
+    SafeVerify,
+    /// 权限/角色数据变更 | Permission or role data changed
+    ///
+    /// 由 [`crate::service::AuthzService`] 的写操作触发。
+    /// Emitted by write operations in `AuthzService`.
+    GrantChanged,
 }
 
-/// 事件数据
+/// 事件分发模式 | Event dispatch mode
+///
+/// 控制监听器的执行方式：顺序、并行、后台。
+/// Controls how listeners are executed: sequential, concurrent, or background.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DispatchMode {
+    /// 顺序执行，await 全部监听器（默认，兼容旧行为）
+    ///
+    /// Sequential execution, awaiting all listeners (default, compatible with old behavior).
+    #[default]
+    Sequential,
+    /// 并行执行，await 全部监听器
+    ///
+    /// Concurrent execution, awaiting all listeners in parallel.
+    Concurrent,
+    /// 后台执行，不阻塞 publish 调用方返回
+    ///
+    /// Detached execution, does not block the publisher.
+    Detached,
+}
+
+/// EventBus 运行时配置 | EventBus runtime configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventBusConfig {
+    /// 分发模式 | Dispatch mode
+    pub dispatch_mode: DispatchMode,
+    /// 单个监听器最大执行时长；None 表示不限时
+    ///
+    /// Maximum execution time per listener; `None` means no timeout.
+    pub listener_timeout: Option<Duration>,
+}
+
+impl Default for EventBusConfig {
+    fn default() -> Self {
+        Self {
+            dispatch_mode: DispatchMode::Sequential,
+            listener_timeout: Some(Duration::from_secs(5)),
+        }
+    }
+}
+
+impl EventBusConfig {
+    /// 创建无超时限制的配置（用于向后兼容）
+    ///
+    /// Creates a config with no timeout (for backward compatibility).
+    pub fn no_timeout() -> Self {
+        Self {
+            listener_timeout: None,
+            ..Default::default()
+        }
+    }
+}
+
+/// 事件数据 | Event data
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SaTokenEvent {
-    /// 事件类型
+    /// 事件类型 | Event type
     pub event_type: SaTokenEventType,
-    /// 登录ID
+    /// 登录ID | Login ID
     pub login_id: String,
-    /// Token 值
+    /// Token 值 | Token value
     pub token: String,
-    /// 登录类型（如 "default", "admin" 等）
+    /// 登录类型（如 "default", "admin" 等）| Login type (e.g. "default", "admin")
     pub login_type: String,
-    /// 事件发生时间
+    /// 事件发生时间 | Event timestamp
     pub timestamp: DateTime<Utc>,
-    /// 额外数据（用于扩展）
+    /// 额外数据（用于扩展）| Extra data (for extension)
     pub extra: Option<serde_json::Value>,
 }
 
 impl SaTokenEvent {
-    /// 创建登录事件
+    /// 创建登录事件 | Create login event
     pub fn login(login_id: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             event_type: SaTokenEventType::Login,
@@ -295,7 +237,7 @@ impl SaTokenEvent {
         }
     }
 
-    /// 创建登出事件
+    /// 创建登出事件 | Create logout event
     pub fn logout(login_id: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             event_type: SaTokenEventType::Logout,
@@ -307,7 +249,7 @@ impl SaTokenEvent {
         }
     }
 
-    /// 创建踢出下线事件
+    /// 创建踢出下线事件 | Create kick out event
     pub fn kick_out(login_id: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             event_type: SaTokenEventType::KickOut,
@@ -319,19 +261,28 @@ impl SaTokenEvent {
         }
     }
 
-    /// 创建 Token 续期事件
-    pub fn renew_timeout(login_id: impl Into<String>, token: impl Into<String>) -> Self {
+    /// 创建 Token 续期事件 | Create token renewal event
+    ///
+    /// # 参数 | Parameters
+    /// - `login_id`: 登录 ID
+    /// - `token`: Token 值
+    /// - `timeout_seconds`: 续期后的有效时长（秒）| Renewed validity period (seconds)
+    pub fn renew_timeout(
+        login_id: impl Into<String>,
+        token: impl Into<String>,
+        timeout_seconds: i64,
+    ) -> Self {
         Self {
             event_type: SaTokenEventType::RenewTimeout,
             login_id: login_id.into(),
             token: token.into(),
             login_type: "default".to_string(),
             timestamp: Utc::now(),
-            extra: None,
+            extra: Some(serde_json::json!({ "timeout_seconds": timeout_seconds })),
         }
     }
 
-    /// 创建被顶下线事件
+    /// 创建被顶下线事件 | Create replaced event
     pub fn replaced(login_id: impl Into<String>, token: impl Into<String>) -> Self {
         Self {
             event_type: SaTokenEventType::Replaced,
@@ -343,47 +294,100 @@ impl SaTokenEvent {
         }
     }
 
-    /// 创建被封禁事件
-    pub fn banned(login_id: impl Into<String>) -> Self {
+    /// 创建被封禁事件 | Create banned event
+    ///
+    /// # 参数 | Parameters
+    /// - `login_id`: 登录 ID
+    /// - `service`: 封禁服务标识（如 "login", "comment"）| Service identifier
+    /// - `level`: 封禁等级 | Ban level
+    pub fn banned(login_id: impl Into<String>, service: impl Into<String>, level: i32) -> Self {
         Self {
             event_type: SaTokenEventType::Banned,
             login_id: login_id.into(),
             token: String::new(),
             login_type: "default".to_string(),
             timestamp: Utc::now(),
-            extra: None,
+            extra: Some(serde_json::json!({ "service": service.into(), "level": level })),
         }
     }
 
+    /// 创建解封事件 | Create unbanned event
+    ///
+    /// # 参数 | Parameters
+    /// - `login_id`: 登录 ID
+    /// - `service`: 解封服务标识 | Service identifier that was unbanned
+    pub fn unbanned(login_id: impl Into<String>, service: impl Into<String>) -> Self {
+        Self {
+            event_type: SaTokenEventType::Unbanned,
+            login_id: login_id.into(),
+            token: String::new(),
+            login_type: "default".to_string(),
+            timestamp: Utc::now(),
+            extra: Some(serde_json::json!({ "service": service.into() })),
+        }
+    }
+
+    /// 创建开启二级认证事件 | Create open safe event
+    ///
+    /// service 存入 extra 字段而非 login_type，避免语义混乱。
+    /// Service stored in `extra` instead of `login_type` to avoid semantic confusion.
     pub fn open_safe(token: impl Into<String>, service: impl Into<String>) -> Self {
+        let svc = service.into();
         Self {
             event_type: SaTokenEventType::OpenSafe,
             login_id: String::new(),
             token: token.into(),
-            login_type: service.into(),
+            login_type: "default".to_string(),
             timestamp: Utc::now(),
-            extra: None,
+            extra: Some(serde_json::json!({ "service": svc })),
         }
     }
 
+    /// 创建关闭二级认证事件 | Create close safe event
     pub fn close_safe(token: impl Into<String>, service: impl Into<String>) -> Self {
+        let svc = service.into();
         Self {
             event_type: SaTokenEventType::CloseSafe,
             login_id: String::new(),
             token: token.into(),
-            login_type: service.into(),
+            login_type: "default".to_string(),
+            timestamp: Utc::now(),
+            extra: Some(serde_json::json!({ "service": svc })),
+        }
+    }
+
+    /// 创建二级认证校验通过事件 | Create safe verification passed event
+    pub fn safe_verify(token: impl Into<String>, service: impl Into<String>) -> Self {
+        let svc = service.into();
+        Self {
+            event_type: SaTokenEventType::SafeVerify,
+            login_id: String::new(),
+            token: token.into(),
+            login_type: "default".to_string(),
+            timestamp: Utc::now(),
+            extra: Some(serde_json::json!({ "service": svc })),
+        }
+    }
+
+    /// 创建权限/角色变更事件 | Create grant changed event
+    pub fn grant_changed(login_id: impl Into<String>, login_type: impl Into<String>) -> Self {
+        Self {
+            event_type: SaTokenEventType::GrantChanged,
+            login_id: login_id.into(),
+            token: String::new(),
+            login_type: login_type.into(),
             timestamp: Utc::now(),
             extra: None,
         }
     }
 
-    /// 设置登录类型
+    /// 设置登录类型 | Set login type
     pub fn with_login_type(mut self, login_type: impl Into<String>) -> Self {
         self.login_type = login_type.into();
         self
     }
 
-    /// 设置额外数据
+    /// 设置额外数据 | Set extra data
     pub fn with_extra(mut self, extra: serde_json::Value) -> Self {
         self.extra = Some(extra);
         self
@@ -391,18 +395,18 @@ impl SaTokenEvent {
 }
 
 /// 事件监听器 trait | Event Listener Trait
-/// 
+///
 /// 实现此 trait 来自定义事件处理逻辑
 /// Implement this trait to customize event handling logic
-/// 
+///
 /// # 使用示例 | Usage Example
-/// 
+///
 /// ```rust,ignore
 /// use async_trait::async_trait;
 /// use sa_token_core::SaTokenListener;
-/// 
+///
 /// struct MyListener;
-/// 
+///
 /// #[async_trait]
 /// impl SaTokenListener for MyListener {
 ///     async fn on_login(&self, login_id: &str, token: &str, login_type: &str) {
@@ -414,176 +418,376 @@ impl SaTokenEvent {
 #[async_trait]
 pub trait SaTokenListener: Send + Sync {
     /// 登录事件 | Login Event
-    /// 
-    /// 当用户成功登录时触发 | Triggered when user successfully logs in
-    /// 
-    /// # 参数 | Parameters
-    /// - `login_id`: 登录 ID | Login ID
-    /// - `token`: Token 值 | Token value
-    /// - `login_type`: 登录类型（如 "web", "websocket"）| Login type (e.g., "web", "websocket")
     async fn on_login(&self, login_id: &str, token: &str, login_type: &str) {
         let _ = (login_id, token, login_type);
     }
 
     /// 登出事件 | Logout Event
-    /// 
-    /// 当用户主动登出时触发 | Triggered when user actively logs out
-    /// 
-    /// # 参数 | Parameters
-    /// - `login_id`: 登录 ID | Login ID
-    /// - `token`: Token 值 | Token value
-    /// - `login_type`: 登录类型 | Login type
     async fn on_logout(&self, login_id: &str, token: &str, login_type: &str) {
         let _ = (login_id, token, login_type);
     }
 
     /// 踢出下线事件 | Kick Out Event
-    /// 
-    /// 当用户被强制踢出下线时触发 | Triggered when user is forcefully kicked out
-    /// 
-    /// # 参数 | Parameters
-    /// - `login_id`: 登录 ID | Login ID
-    /// - `token`: Token 值 | Token value
-    /// - `login_type`: 登录类型 | Login type
     async fn on_kick_out(&self, login_id: &str, token: &str, login_type: &str) {
         let _ = (login_id, token, login_type);
     }
 
     /// Token 续期事件 | Token Renewal Event
-    /// 
-    /// 当 Token 有效期被延长时触发 | Triggered when token validity is extended
-    /// 
+    ///
     /// # 参数 | Parameters
     /// - `login_id`: 登录 ID | Login ID
     /// - `token`: Token 值 | Token value
     /// - `login_type`: 登录类型 | Login type
-    async fn on_renew_timeout(&self, login_id: &str, token: &str, login_type: &str) {
-        let _ = (login_id, token, login_type);
+    /// - `timeout_seconds`: 续期后的有效时长（秒）| Renewed validity period (seconds)
+    async fn on_renew_timeout(
+        &self,
+        login_id: &str,
+        token: &str,
+        login_type: &str,
+        timeout_seconds: i64,
+    ) {
+        let _ = (login_id, token, login_type, timeout_seconds);
     }
 
     /// 被顶下线事件 | Replaced Event
-    /// 
-    /// 当用户在其他设备登录导致当前设备被顶下线时触发
-    /// Triggered when user logs in on another device and current device is replaced
-    /// 
-    /// # 参数 | Parameters
-    /// - `login_id`: 登录 ID | Login ID
-    /// - `token`: Token 值 | Token value
-    /// - `login_type`: 登录类型 | Login type
     async fn on_replaced(&self, login_id: &str, token: &str, login_type: &str) {
         let _ = (login_id, token, login_type);
     }
 
     /// 被封禁事件 | Banned Event
-    /// 
-    /// 当用户账号被封禁时触发 | Triggered when user account is banned
-    /// 
-    /// # 参数 | Parameters
-    /// - `login_id`: 登录 ID | Login ID
-    /// - `login_type`: 登录类型 | Login type
     async fn on_banned(&self, login_id: &str, login_type: &str) {
         let _ = (login_id, login_type);
     }
 
+    /// 解封事件 | Unbanned Event
+    ///
+    /// # 参数 | Parameters
+    /// - `login_id`: 登录 ID | Login ID
+    /// - `service`: 解封的服务标识 | Service identifier that was unbanned
+    /// - `login_type`: 登录类型 | Login type
+    async fn on_unbanned(&self, login_id: &str, service: &str, login_type: &str) {
+        let _ = (login_id, service, login_type);
+    }
+
+    /// 开启二级认证 | Open Safe Authentication
     async fn on_open_safe(&self, token: &str, service: &str) {
         let _ = (token, service);
     }
 
+    /// 关闭二级认证 | Close Safe Authentication
     async fn on_close_safe(&self, token: &str, service: &str) {
         let _ = (token, service);
     }
 
+    /// 二级认证校验通过 | Safe Verification Passed
+    ///
+    /// # 参数 | Parameters
+    /// - `token`: Token 值 | Token value
+    /// - `service`: 业务标识 | Service identifier
+    async fn on_safe_verify(&self, token: &str, service: &str) {
+        let _ = (token, service);
+    }
+
+    /// 权限/角色变更事件 | Grant Changed Event
+    async fn on_grant_changed(&self, login_id: &str, login_type: &str) {
+        let _ = (login_id, login_type);
+    }
+
     /// 通用事件处理（所有事件都会触发此方法）
     /// Generic Event Handler (triggered by all events)
-    /// 
-    /// # 参数 | Parameters
-    /// - `event`: 事件对象 | Event object
     async fn on_event(&self, event: &SaTokenEvent) {
         let _ = event;
     }
 }
 
+/// Listener list snapshot type for publish (Arc clone of Arc<Vec>).
+/// publish 用的监听器快照类型（对 Arc<Vec> 做 Arc clone）。
+type ListenerList = Arc<Vec<Arc<dyn SaTokenListener>>>;
+
 /// 事件总线 - 管理所有监听器并分发事件
+///
+/// Event bus - manages all listeners and dispatches events.
+///
+/// 列表用内层 `Arc<Vec>` 做 publish 快照；配置保持值字段。
+/// Inner `Arc<Vec>` makes publish a pointer snapshot; config stays a value field.
 #[derive(Clone)]
 pub struct SaTokenEventBus {
-    listeners: Arc<RwLock<Vec<Arc<dyn SaTokenListener>>>>,
+    listeners: Arc<RwLock<ListenerList>>,
+    config: EventBusConfig,
+}
+
+impl std::fmt::Debug for SaTokenEventBus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SaTokenEventBus { .. }")
+    }
 }
 
 impl SaTokenEventBus {
-    /// 创建新的事件总线
+    /// 创建新的事件总线（默认配置）
+    ///
+    /// Creates a new event bus with default configuration.
     pub fn new() -> Self {
+        Self::with_config(EventBusConfig::default())
+    }
+
+    /// 创建事件总线（自定义配置）
+    ///
+    /// Creates an event bus with custom configuration.
+    pub fn with_config(config: EventBusConfig) -> Self {
         Self {
-            listeners: Arc::new(RwLock::new(Vec::new())),
+            listeners: Arc::new(RwLock::new(Arc::new(Vec::new()))),
+            config,
         }
     }
 
-    /// 注册监听器
-    /// Register a listener
-    pub fn register(&self, listener: Arc<dyn SaTokenListener>) {
-        let mut listeners = self.listeners.write().unwrap();
-        listeners.push(listener);
+    /// 获取配置引用 | Get configuration reference
+    pub fn config(&self) -> &EventBusConfig {
+        &self.config
     }
-    
+
+    /// poison 时 into_inner 恢复，单个 listener unwind 不能卡住整条总线。
+    /// Recover from a poisoned lock so one unwind cannot jam the bus.
+    fn read_guard(&self) -> std::sync::RwLockReadGuard<'_, Arc<Vec<Arc<dyn SaTokenListener>>>> {
+        self.listeners.read().unwrap_or_else(|poisoned| {
+            tracing::warn!("EventBus RwLock poisoned, recovering");
+            poisoned.into_inner()
+        })
+    }
+
+    fn write_guard(&self) -> std::sync::RwLockWriteGuard<'_, Arc<Vec<Arc<dyn SaTokenListener>>>> {
+        self.listeners.write().unwrap_or_else(|poisoned| {
+            tracing::warn!("EventBus RwLock poisoned during write, recovering");
+            poisoned.into_inner()
+        })
+    }
+
+    /// 热路径：拷贝表指针后立即放锁，供后续 await 使用。
+    /// Hot path: clone the table pointer then drop the lock before any `.await`.
+    fn snapshot(&self) -> Arc<Vec<Arc<dyn SaTokenListener>>> {
+        Arc::clone(&*self.read_guard())
+    }
+
+    /// 注册监听器 | Registers a listener.
+    pub fn register(&self, listener: Arc<dyn SaTokenListener>) {
+        let mut guard = self.write_guard();
+        let mut next = Vec::with_capacity(guard.len() + 1);
+        next.extend(guard.iter().cloned());
+        next.push(listener);
+        *guard = Arc::new(next);
+    }
+
     /// 异步注册监听器（为了保持 API 兼容性）
-    /// Register a listener asynchronously (for API compatibility)
+    ///
+    /// Registers a listener asynchronously (for API compatibility).
     pub async fn register_async(&self, listener: Arc<dyn SaTokenListener>) {
         self.register(listener);
     }
 
-    /// 移除所有监听器
-    /// Clear all listeners
+    /// 移除所有监听器 | Clears all listeners.
     pub fn clear(&self) {
-        let mut listeners = self.listeners.write().unwrap();
-        listeners.clear();
+        *self.write_guard() = Arc::new(Vec::new());
     }
 
-    /// 获取监听器数量
-    /// Get listener count
+    /// 只读长度。Arc&lt;Vec&gt; Deref 到 Vec，不必为 count 克隆表。
+    /// Read `len` via Deref; never clone the vec just to count.
     pub fn listener_count(&self) -> usize {
-        let listeners = self.listeners.read().unwrap();
-        listeners.len()
+        self.read_guard().len()
     }
 
-    /// 发布事件
-    /// Publish an event to all listeners
+    /// 发布事件（按 DispatchMode 分发）
+    ///
+    /// Publishes an event (dispatches according to DispatchMode).
     pub async fn publish(&self, event: SaTokenEvent) {
-        // 克隆监听器列表以避免持有锁时异步等待
-        // Clone listener list to avoid holding lock during async operations
-        let listeners = {
-            let guard = self.listeners.read().unwrap();
-            guard.clone()
-        };
-        
+        match self.config.dispatch_mode {
+            DispatchMode::Sequential => {
+                self.dispatch_sequential(event).await;
+            }
+            DispatchMode::Concurrent => {
+                self.dispatch_concurrent(event).await;
+            }
+            DispatchMode::Detached => {
+                let bus = self.clone();
+                tokio::spawn(async move {
+                    bus.dispatch_sequential(event).await;
+                });
+            }
+        }
+    }
+
+    /// 顺序分发（超时 + panic 隔离）
+    ///
+    /// Sequential dispatch (timeout + panic isolation).
+    async fn dispatch_sequential(&self, event: SaTokenEvent) {
+        let listeners = self.snapshot();
+        let timeout = self.config.listener_timeout;
         for listener in listeners.iter() {
-            // 触发通用事件处理
-            listener.on_event(&event).await;
-            
-            // 根据事件类型触发特定处理
-            match event.event_type {
-                SaTokenEventType::Login => {
-                    listener.on_login(&event.login_id, &event.token, &event.login_type).await;
+            Self::invoke_listener_safe(Arc::clone(listener), &event, timeout).await;
+        }
+    }
+
+    /// 并行分发（检查 JoinError）
+    ///
+    /// Concurrent dispatch (checks JoinError).
+    async fn dispatch_concurrent(&self, event: SaTokenEvent) {
+        let listeners = self.snapshot();
+        let timeout = self.config.listener_timeout;
+        let mut handles = Vec::with_capacity(listeners.len());
+
+        for listener in listeners.iter() {
+            let listener = Arc::clone(listener);
+            let ev = event.clone();
+            let handle = tokio::spawn(async move {
+                Self::invoke_listener_safe(listener, &ev, timeout).await;
+            });
+            handles.push(handle);
+        }
+
+        for (idx, handle) in handles.into_iter().enumerate() {
+            if let Err(e) = handle.await {
+                if e.is_panic() {
+                    tracing::warn!(
+                        listener_idx = idx,
+                        "listener task panicked in concurrent mode"
+                    );
+                } else {
+                    tracing::warn!(listener_idx = idx, "listener task cancelled");
                 }
-                SaTokenEventType::Logout => {
-                    listener.on_logout(&event.login_id, &event.token, &event.login_type).await;
+            }
+        }
+    }
+
+    /// 单监听器安全调用（spawn 隔离 panic + timeout 保护）
+    ///
+    /// Safe invocation of a single listener (spawn isolates panic + timeout).
+    async fn invoke_listener_safe(
+        listener: Arc<dyn SaTokenListener>,
+        event: &SaTokenEvent,
+        timeout: Option<Duration>,
+    ) {
+        let event_owned = event.clone();
+        let handle = tokio::spawn(async move {
+            let fut = Self::dispatch_to_listener(&listener, &event_owned);
+            match timeout {
+                Some(d) => match tokio::time::timeout(d, fut).await {
+                    Ok(()) => Ok(()),
+                    Err(_elapsed) => Err("timeout"),
+                },
+                None => {
+                    fut.await;
+                    Ok(())
                 }
-                SaTokenEventType::KickOut => {
-                    listener.on_kick_out(&event.login_id, &event.token, &event.login_type).await;
-                }
-                SaTokenEventType::RenewTimeout => {
-                    listener.on_renew_timeout(&event.login_id, &event.token, &event.login_type).await;
-                }
-                SaTokenEventType::Replaced => {
-                    listener.on_replaced(&event.login_id, &event.token, &event.login_type).await;
-                }
-                SaTokenEventType::Banned => {
-                    listener.on_banned(&event.login_id, &event.login_type).await;
-                }
-                SaTokenEventType::OpenSafe => {
-                    listener.on_open_safe(&event.token, &event.login_type).await;
-                }
-                SaTokenEventType::CloseSafe => {
-                    listener.on_close_safe(&event.token, &event.login_type).await;
-                }
+            }
+        });
+
+        match handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err("timeout")) => {
+                tracing::warn!(
+                    event_type = ?event.event_type,
+                    "listener timed out during event dispatch"
+                );
+            }
+            Ok(Err(_)) => {}
+            Err(e) if e.is_panic() => {
+                tracing::warn!(
+                    event_type = ?event.event_type,
+                    "listener panicked during event dispatch"
+                );
+            }
+            Err(e) => {
+                tracing::warn!("listener task cancelled: {:?}", e);
+            }
+        }
+    }
+
+    /// 分发事件到单个监听器（on_event + typed 方法）
+    ///
+    /// Dispatches an event to a single listener (on_event + typed method).
+    async fn dispatch_to_listener(listener: &Arc<dyn SaTokenListener>, event: &SaTokenEvent) {
+        listener.on_event(event).await;
+
+        match event.event_type {
+            SaTokenEventType::Login => {
+                listener
+                    .on_login(&event.login_id, &event.token, &event.login_type)
+                    .await;
+            }
+            SaTokenEventType::Logout => {
+                listener
+                    .on_logout(&event.login_id, &event.token, &event.login_type)
+                    .await;
+            }
+            SaTokenEventType::KickOut => {
+                listener
+                    .on_kick_out(&event.login_id, &event.token, &event.login_type)
+                    .await;
+            }
+            SaTokenEventType::RenewTimeout => {
+                let timeout_seconds = event
+                    .extra
+                    .as_ref()
+                    .and_then(|v| v.get("timeout_seconds"))
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                listener
+                    .on_renew_timeout(
+                        &event.login_id,
+                        &event.token,
+                        &event.login_type,
+                        timeout_seconds,
+                    )
+                    .await;
+            }
+            SaTokenEventType::Replaced => {
+                listener
+                    .on_replaced(&event.login_id, &event.token, &event.login_type)
+                    .await;
+            }
+            SaTokenEventType::Banned => {
+                listener.on_banned(&event.login_id, &event.login_type).await;
+            }
+            SaTokenEventType::Unbanned => {
+                let service = event
+                    .extra
+                    .as_ref()
+                    .and_then(|v| v.get("service"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                listener
+                    .on_unbanned(&event.login_id, service, &event.login_type)
+                    .await;
+            }
+            SaTokenEventType::OpenSafe => {
+                let service = event
+                    .extra
+                    .as_ref()
+                    .and_then(|v| v.get("service"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&event.login_type);
+                listener.on_open_safe(&event.token, service).await;
+            }
+            SaTokenEventType::CloseSafe => {
+                let service = event
+                    .extra
+                    .as_ref()
+                    .and_then(|v| v.get("service"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(&event.login_type);
+                listener.on_close_safe(&event.token, service).await;
+            }
+            SaTokenEventType::SafeVerify => {
+                let service = event
+                    .extra
+                    .as_ref()
+                    .and_then(|v| v.get("service"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                listener.on_safe_verify(&event.token, service).await;
+            }
+            SaTokenEventType::GrantChanged => {
+                listener
+                    .on_grant_changed(&event.login_id, &event.login_type)
+                    .await;
             }
         }
     }
@@ -595,7 +799,7 @@ impl Default for SaTokenEventBus {
     }
 }
 
-/// 简单的日志监听器示例
+/// 简单的日志监听器示例 | Simple logging listener example
 pub struct LoggingListener;
 
 #[async_trait]
@@ -627,11 +831,18 @@ impl SaTokenListener for LoggingListener {
         );
     }
 
-    async fn on_renew_timeout(&self, login_id: &str, token: &str, login_type: &str) {
+    async fn on_renew_timeout(
+        &self,
+        login_id: &str,
+        token: &str,
+        login_type: &str,
+        timeout_seconds: i64,
+    ) {
         tracing::debug!(
             login_id = %login_id,
             token = %token,
             login_type = %login_type,
+            timeout_seconds = timeout_seconds,
             "Token 续期"
         );
     }
@@ -651,6 +862,29 @@ impl SaTokenListener for LoggingListener {
             login_type = %login_type,
             "用户被封禁"
         );
+    }
+
+    async fn on_unbanned(&self, login_id: &str, service: &str, login_type: &str) {
+        tracing::info!(
+            login_id = %login_id,
+            service = %service,
+            login_type = %login_type,
+            "用户被解封"
+        );
+    }
+
+    async fn on_safe_verify(&self, token: &str, service: &str) {
+        tracing::debug!(
+            token = %token,
+            service = %service,
+            "二级认证校验通过"
+        );
+    }
+}
+
+impl std::fmt::Debug for LoggingListener {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("LoggingListener { .. }")
     }
 }
 
@@ -680,17 +914,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_event_bus() {
-        let bus = SaTokenEventBus::new();
+        let bus = SaTokenEventBus::with_config(EventBusConfig::no_timeout());
         let listener = Arc::new(TestListener::new());
         let login_count = Arc::clone(&listener.login_count);
-        
+
         bus.register(listener);
-        
-        // 发布登录事件
+
         let event = SaTokenEvent::login("user_123", "token_abc");
         bus.publish(event).await;
-        
-        // 验证监听器被调用
+
         let count = login_count.read().unwrap();
         assert_eq!(*count, 1);
     }
@@ -703,4 +935,3 @@ mod tests {
         assert_eq!(event.token, "token_abc");
     }
 }
-

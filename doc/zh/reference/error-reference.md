@@ -1,238 +1,141 @@
 # 错误参考
 
-## 中文
+[English](/reference/error-reference.md) | 中文
 
-### 错误分类
+核心统一错误类型为 `SaTokenError`（定义于 `sa-token-core`）。用户可见的 `Display` / `message()` 文案为**英文**（与 `#[error(...)]` 一致）。
 
-sa-token-rust 提供了 32 种错误类型，分为 10 个类别：
+## SaTokenResult
 
-#### 1. 基础 Token 错误
+```rust
+pub type SaTokenResult<T> = Result<T, SaTokenError>;
+```
 
-##### TokenNotFound
-- **消息**：Token 未找到或已过期
-- **描述**：请求的 Token 在存储中不存在或已过期
-- **常见原因**：Token 从未创建、自然过期或被手动删除
-- **解决方案**：用户需要重新登录以获取新的 Token
+业务与库 API 普遍返回该别名。也可用 `err.is_auth_error()` / `err.is_authz_error()` 做粗分类。
 
-##### InvalidToken
-- **消息**：Token 无效：{原因}
-- **描述**：Token 格式或内容无效
-- **常见原因**：Token 损坏、被篡改或格式错误
-- **解决方案**：验证 Token 完整性并确保格式正确
-
-##### TokenExpired
-- **消息**：Token 已过期
-- **描述**：Token 已超过其有效期
-- **常见原因**：Token 超时超过配置的持续时间
-- **解决方案**：使用刷新令牌获取新的访问令牌或重新认证
-
-#### 2. 认证错误
-
-##### NotLogin
-- **消息**：用户未登录
-- **描述**：用户试图在未认证的情况下访问受保护的资源
-- **常见原因**：未提供 Token，请求中找不到 Token
-- **解决方案**：用户必须先登录以获取有效的 Token
-
-#### 3. 授权错误
-
-##### PermissionDenied
-- **消息**：权限被拒绝：缺少权限 '{权限}'
-- **描述**：用户缺少执行该操作所需的权限
-- **常见原因**：用户权限不足
-- **解决方案**：为用户或角色授予所需权限
-
-##### RoleDenied
-- **消息**：角色被拒绝：缺少角色 '{角色}'
-- **描述**：用户没有所需的角色
-- **常见原因**：用户未被分配到必要的角色
-- **解决方案**：为用户分配所需角色
-
-#### 4. 账户状态错误
-
-##### AccountBanned
-- **消息**：账户被封禁至 {时间}
-- **描述**：账户已被临时或永久封禁
-- **常见原因**：违反条款、安全问题或管理员操作
-- **解决方案**：等待封禁到期或联系管理员
-
-##### AccountKickedOut
-- **消息**：账户被踢出
-- **描述**：用户会话已被强制终止
-- **常见原因**：管理员踢出用户、在其他设备上并发登录
-- **解决方案**：用户需要重新登录
-
-#### 5. Session 错误
-
-##### SessionNotFound
-- **消息**：Session 未找到
-- **描述**：会话不存在或已被删除
-- **常见原因**：会话过期、被手动删除或从未创建
-- **解决方案**：通过登录建立新会话
-
-#### 6. Nonce 错误
-
-##### NonceAlreadyUsed
-- **消息**：Nonce 已被使用，可能检测到重放攻击
-- **描述**：Nonce 已被消费，表明可能存在重放攻击
-- **常见原因**：重复提交请求、重放攻击尝试
-- **解决方案**：为每个请求生成新的 Nonce
-
-##### InvalidNonceFormat
-- **消息**：无效的 Nonce 格式
-- **描述**：Nonce 不符合预期格式
-- **常见原因**：Nonce 损坏、手动构造的无效 Nonce
-- **解决方案**：使用标准的 Nonce 生成方法
-
-##### InvalidNonceTimestamp
-- **消息**：Nonce 时间戳无效或已过期
-- **描述**：Nonce 中嵌入的时间戳无效或超出有效时间窗口
-- **常见原因**：系统时间偏移、Nonce 过期或时间戳被篡改
-- **解决方案**：同步系统时间并生成新的 Nonce
-
-#### 7. 刷新令牌错误
-
-##### RefreshTokenNotFound
-- **消息**：刷新令牌未找到或已过期
-- **描述**：刷新令牌不存在或已过期
-- **常见原因**：从未发行、已过期或已撤销
-- **解决方案**：用户必须重新认证以获取新的刷新令牌
-
-##### RefreshTokenInvalidData
-- **消息**：无效的刷新令牌数据
-- **描述**：存储的刷新令牌数据已损坏或格式错误
-- **常见原因**：存储损坏、篡改或序列化错误
-- **解决方案**：用户必须重新认证
-
-##### RefreshTokenMissingLoginId
-- **消息**：刷新令牌中缺少 login_id
-- **描述**：刷新令牌缺少必需的 login_id 字段
-- **常见原因**：数据损坏或令牌生成不完整
-- **解决方案**：生成新的刷新令牌
-
-##### RefreshTokenInvalidExpireTime
-- **消息**：刷新令牌中的过期时间格式无效
-- **描述**：刷新令牌中的过期时间无法解析
-- **常见原因**：日期格式不正确或数据损坏
-- **解决方案**：生成格式正确的新刷新令牌
-
-#### 8. Token 验证错误
-
-##### TokenEmpty
-- **消息**：Token 为空
-- **描述**：未提供 Token 值
-- **常见原因**：传递了空字符串作为 Token
-- **解决方案**：提供有效的 Token 值
-
-##### TokenTooShort
-- **消息**：Token 太短
-- **描述**：Token 长度低于最小要求（8 个字符）
-- **常见原因**：被截断或无效的 Token
-- **解决方案**：提供完整有效的 Token
-
-##### LoginIdNotNumber
-- **消息**：登录 ID 不是有效数字
-- **描述**：无法将登录 ID 解析为数值
-- **常见原因**：当期望数字时提供了非数字登录 ID
-- **解决方案**：确保登录 ID 格式与预期类型匹配
-
-#### 9. OAuth2 错误
-
-##### OAuth2ClientNotFound
-- **消息**：OAuth2 客户端未找到
-- **描述**：OAuth2 客户端 ID 不存在
-- **常见原因**：未注册的客户端或客户端 ID 错误
-- **解决方案**：注册客户端或验证客户端 ID
-
-##### OAuth2InvalidCredentials
-- **消息**：无效的客户端凭据
-- **描述**：客户端 ID 和密钥组合无效
-- **常见原因**：密钥错误、凭据输入错误
-- **解决方案**：验证客户端凭据是否正确
-
-##### OAuth2ClientIdMismatch
-- **消息**：客户端 ID 不匹配
-- **描述**：客户端 ID 与预期值不匹配
-- **常见原因**：为授权码或刷新令牌使用了错误的客户端 ID
-- **解决方案**：使用发起流程的正确客户端 ID
-
-##### OAuth2RedirectUriMismatch
-- **消息**：重定向 URI 不匹配
-- **描述**：重定向 URI 与注册的 URI 不匹配
-- **常见原因**：URI 不在白名单中、URI 拼写错误
-- **解决方案**：使用已注册的重定向 URI
-
-##### OAuth2CodeNotFound
-- **消息**：授权码未找到或已过期
-- **描述**：授权码不存在或已过期
-- **常见原因**：授权码已使用、已过期（通常 10 分钟）
-- **解决方案**：请求新的授权码
-
-##### OAuth2AccessTokenNotFound
-- **消息**：访问令牌未找到或已过期
-- **描述**：OAuth2 访问令牌未找到或已过期
-- **常见原因**：令牌过期（通常 1 小时）、已撤销或从未发行
-- **解决方案**：刷新令牌或重新授权
-
-##### OAuth2RefreshTokenNotFound
-- **消息**：刷新令牌未找到或已过期
-- **描述**：OAuth2 刷新令牌未找到或已过期
-- **常见原因**：令牌过期（通常 30 天）、已撤销或从未发行
-- **解决方案**：用户必须重新授权
-
-##### OAuth2InvalidRefreshToken
-- **消息**：无效的刷新令牌数据
-- **描述**：刷新令牌数据已损坏或无效
-- **常见原因**：数据损坏、篡改
-- **解决方案**：重新授权以获取新令牌
-
-##### OAuth2InvalidScope
-- **消息**：无效的权限范围数据
-- **描述**：权限范围数据无效或已损坏
-- **常见原因**：权限范围格式无效、未授权的权限范围请求
-- **解决方案**：仅请求有效的权限范围
-
-#### 10. 系统错误
-
-##### StorageError
-- **消息**：存储错误：{详情}
-- **描述**：访问存储后端时发生错误
-- **常见原因**：数据库连接失败、Redis 不可用、网络问题
-- **解决方案**：检查存储后端状态和连接性
-
-##### ConfigError
-- **消息**：配置错误：{详情}
-- **描述**：配置无效或缺失
-- **常见原因**：缺少必需配置、配置值无效
-- **解决方案**：审查并修复配置
-
-##### SerializationError
-- **消息**：序列化错误：{详情}
-- **描述**：序列化或反序列化数据失败
-- **常见原因**：数据结构不匹配、JSON 损坏
-- **解决方案**：检查数据格式和结构
-
-##### InternalError
-- **消息**：内部错误：{详情}
-- **描述**：发生意外的内部错误
-- **常见原因**：编程错误、意外状态
-- **解决方案**：向开发人员报告错误详情
+应用层短文案常量（非 `SaTokenError` 变体）见 `sa_token_core::error::messages`（如 `INVALID_CREDENTIALS`）。
 
 ---
 
+## 按域分组
 
-## Summary | 总结
+下列分组对照 `sa-token-core/src/error.rs`。每组附一行典型触发场景。
 
-This document provides comprehensive error documentation in Chinese and English for sa-token-rust. Each error includes:
-- Error message
-- Detailed description
-- Common causes
-- Solutions
+### Token / 登录
 
-For developers integrating sa-token-rust, this guide helps understand and handle errors effectively.
+| 变体 | 典型触发 |
+|------|----------|
+| `TokenNotFound` | 存储中无此 token，或已过期被清掉 |
+| `InvalidToken(String)` | token 格式/内容校验失败 |
+| `TokenExpired` | 明确判定 token 已过期 |
+| `NotLogin` | 当前请求上下文未登录 |
+| `TokenInactive` | token 存在但未激活（如冻结/未启用） |
+| `TokenEmpty` | 传入空 token 字符串 |
+| `TokenTooShort` | token 长度低于校验下限 |
+| `LoginIdNotNumber` | 需要数字 login_id 时解析失败 |
+| `SessionNotFound` | 会话不存在或已被删除 |
+
+### 授权（权限 / 角色 / 终端）
+
+| 变体 | 典型触发 |
+|------|----------|
+| `PermissionDenied` | 权限校验失败（未带具体权限名） |
+| `PermissionDeniedDetail(String)` | 缺少指定权限码 |
+| `RoleDenied(String)` | 缺少指定角色 |
+| `TerminalDenied { expected, actual }` | 当前设备/终端与允许模式不符 |
+
+### 账号安全
+
+| 变体 | 典型触发 |
+|------|----------|
+| `AccountBanned(String)` | 账号被封禁至指定时间 |
+| `AccountKickedOut` | 被踢下线 |
+| `AccountReplaced` | 其他设备顶替登录 |
+| `NotSafe(String)` | 指定服务尚未通过二次认证 |
+| `DisableService { service, level }` | 账号在某服务下被按等级禁用 |
+| `SameTokenInvalid` | Same-Token 头缺失或不匹配 |
+| `BasicAuthFailed { realm }` | HTTP Basic 凭据缺失或不匹配 |
+| `SignInvalid` | 请求签名不匹配 |
+| `SignTimestampExpired` | 签名时间戳缺失或超出窗口 |
+| `TempTokenNotFound` | 临时令牌不存在或已删除 |
+| `TempTokenExpired` | 临时令牌已过 `expire_at` |
+
+### 初始化
+
+| 变体 | 典型触发 |
+|------|----------|
+| `NotInitialized` | 未调用 `StpUtil::try_init_manager`（或等价初始化）就使用全局 API |
+| `AlreadyInitialized` | 重复初始化全局 Manager |
+
+### 存储 / 配置 / 序列化 / 内部
+
+| 变体 | 典型触发 |
+|------|----------|
+| `StorageError(String)` | 底层 `SaStorage` 操作失败 |
+| `ConfigError(String)` | 配置非法（如缺 storage、JWT 密钥不合规），常见于 `try_build` |
+| `SerializationError(String)` | 序列化或反序列化失败（亦由 `serde_json::Error` 转换） |
+| `InternalError(String)` | 未预期的内部错误 |
+
+### OAuth2
+
+| 变体 | 典型触发 |
+|------|----------|
+| `OAuth2ClientNotFound` | 客户端未注册 |
+| `OAuth2InvalidCredentials` | client_id / secret 无效 |
+| `OAuth2ClientIdMismatch` | 令牌/码与 client_id 不一致 |
+| `OAuth2RedirectUriMismatch` | redirect_uri 与登记值不符 |
+| `OAuth2CodeNotFound` | 授权码不存在或过期 |
+| `OAuth2AccessTokenNotFound` | 访问令牌不存在或过期 |
+| `OAuth2RefreshTokenNotFound` | OAuth2 刷新令牌不存在或过期 |
+| `OAuth2InvalidRefreshToken` | OAuth2 刷新令牌数据无效 |
+| `OAuth2InvalidScope` | scope 数据无效 |
+| `OAuth2PkceRequired` | 需要 `code_verifier` 但未提供 |
+| `OAuth2PkceMismatch` | PKCE 校验失败 |
+| `OAuth2TokenRevokeFailed(String)` | 吊销失败 |
+| `OAuth2UnsupportedGrant` | 不支持的 grant_type |
+| `OAuth2PkceRequiredForPublicClient` | 公共客户端未使用 PKCE S256 |
+
+### SSO
+
+| 变体 | 典型触发 |
+|------|----------|
+| `InvalidTicket` | ticket 不存在或无效 |
+| `TicketExpired` | ticket 已过期 |
+| `ServiceMismatch` | service URL 与登记不符 |
+| `SsoSessionNotFound` | SSO 会话不存在 |
+| `SsoSignInvalid` | SSO 请求签名无效 |
+
+### Nonce / Refresh（sa-token 刷新令牌）
+
+| 变体 | 典型触发 |
+|------|----------|
+| `NonceAlreadyUsed` | nonce 已消费，疑似重放 |
+| `InvalidNonceFormat` | nonce 格式无效 |
+| `InvalidNonceTimestamp` | nonce 时间戳无效或过期 |
+| `RefreshTokenNotFound` | 刷新令牌不存在或过期 |
+| `RefreshTokenInvalidData` | 刷新令牌载荷无效 |
+| `RefreshTokenMissingLoginId` | 刷新令牌缺少 login_id |
+| `RefreshTokenInvalidExpireTime` | 刷新令牌过期时间格式无效 |
 
 ---
 
-**Version**: 0.1.14  
-**Last Updated**: 2026-05-07
+## 匹配示例
 
+```rust
+use sa_token_core::{SaTokenError, SaTokenResult};
+
+fn map_status(err: SaTokenError) -> u16 {
+    match err {
+        SaTokenError::NotLogin | SaTokenError::TokenNotFound | SaTokenError::TokenExpired => 401,
+        e if e.is_authz_error() => 403,
+        SaTokenError::NotInitialized | SaTokenError::ConfigError(_) => 500,
+        _ => 400,
+    }
+}
+```
+
+## 相关文档
+
+- [快速入门](/zh/guide/quick-start.md)
+- [安全特性](/zh/guide/security-features.md)
+- [OAuth2](/zh/guide/oauth2.md)
+- [SSO](/zh/guide/sso.md)

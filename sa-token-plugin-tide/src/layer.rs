@@ -5,9 +5,8 @@
 use sa_token_adapter::context::SaRequest;
 use sa_token_adapter::utils::{parse_cookies, parse_query_string};
 use sa_token_core::router::{PathAuthConfig, run_auth_flow};
+use sa_token_plugin_common::{SaLoginId, SaTokenState};
 use tide_017::{Middleware, Next, Request, Result};
-
-use crate::state::SaTokenState;
 
 pub(crate) struct TideRequestAdapter<'a, S> {
     req: &'a Request<S>,
@@ -80,24 +79,26 @@ impl<State: Clone + Send + Sync + 'static> Middleware<State> for SaTokenLayer {
         let flow = run_auth_flow(&adapter, &self.state.manager, self.path_config.as_ref()).await;
 
         if flow.should_reject() {
-            return Ok(
-                tide_017::Response::builder(tide_017::StatusCode::Unauthorized).build(),
-            );
+            return Ok(tide_017::Response::builder(tide_017::StatusCode::Unauthorized).build());
         }
 
         if let Some(t) = &flow.token {
             req.set_ext(t.clone());
         }
         if let Some(id) = &flow.login_id {
-            req.set_ext(id.clone());
+            req.set_ext(SaLoginId(id.clone()));
         }
 
         Ok(flow.run(next.run(req)).await)
     }
 }
 
-/// Extract token using shared router logic.
-pub fn extract_token_from_request<State>(req: &Request<State>, token_name: &str) -> Option<String> {
+/// Extract token using shared router logic and live config.
+/// 使用共享 router 逻辑与当前配置提取 token。
+pub fn extract_token_from_request<State>(
+    req: &Request<State>,
+    config: &sa_token_core::SaTokenConfig,
+) -> Option<String> {
     let adapter = TideRequestAdapter::new(req);
-    sa_token_core::router::extract_token(&adapter, token_name)
+    sa_token_core::router::extract_token_from(&adapter, config)
 }

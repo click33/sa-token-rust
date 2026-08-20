@@ -41,7 +41,7 @@ pub async fn init_sa_token(redis_config: Option<&RedisConfig>) -> Result<Arc<SaT
             
             let redis_storage = RedisStorage::new(RedisConfig {
                 url: _redis_cfg.url.clone(),
-                prefix: _redis_cfg.prefix.clone().unwrap_or_else(|| "sa_token:".to_string()),
+                prefix: _redis_cfg.prefix.clone().unwrap_or_default(),
             }).await?;
             
             config_builder = config_builder.storage(Arc::new(redis_storage));

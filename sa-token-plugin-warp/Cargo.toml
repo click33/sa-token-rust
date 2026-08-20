@@ -2,6 +2,7 @@
 name = "sa-token-plugin-warp"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -13,14 +14,15 @@ description = "Warp framework integration for sa-token-rust - All-in-one package
 
 [dependencies]
 # 核心依赖（重新导出给用户）
-sa-token-core = { version = "0.1.18" }
-sa-token-adapter = { version = "0.1.18" }
-sa-token-macro = { version = "0.1.18" }
+sa-token-core = { workspace = true }
+sa-token-adapter = { workspace = true }
+sa-token-macro = { workspace = true }
+sa-token-plugin-common = { workspace = true }
 
 # 存储实现（可选，通过 feature 控制）
-sa-token-storage-memory = { version = "0.1.18", optional = true }
-sa-token-storage-redis = { version = "0.1.18", optional = true }
-sa-token-storage-database = { version = "0.1.18", optional = true }
+sa-token-storage-memory = { workspace = true, optional = true }
+sa-token-storage-redis = { workspace = true, optional = true }
+sa-token-storage-database = { workspace = true, optional = true }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }
@@ -37,8 +39,15 @@ tracing = { workspace = true }
 default = ["warp-03", "memory"]
 warp-03 = ["dep:warp-03"]
 # 存储后端选择
-memory = ["sa-token-storage-memory"]
-redis = ["sa-token-storage-redis"]
-database = ["sa-token-storage-database"]
+memory = ["dep:sa-token-storage-memory"]
+redis = ["dep:sa-token-storage-redis"]
+database = ["dep:sa-token-storage-database"]
 # 包含所有存储后端
 full = ["memory", "redis", "database"]
+
+[package.metadata.docs.rs]
+features = ["memory", "redis", "database"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

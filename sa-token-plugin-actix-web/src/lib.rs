@@ -5,6 +5,8 @@
 //! - **`v5`**: placeholder only; enabling **only** `v5` triggers **`compile_error!`** on this crate.
 //!   **`v5`**：仅占位；仅启用 **`v5`** 时在本 crate 上触发 **`compile_error!`**。
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(all(feature = "v4", feature = "v5"))]
 compile_error!("sa-token-plugin-actix-web: enable exactly one of `v4` / `v5`.");
 

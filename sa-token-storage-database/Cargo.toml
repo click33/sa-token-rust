@@ -2,6 +2,7 @@
 name = "sa-token-storage-database"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -17,7 +18,7 @@ postgres = ["sqlx/postgres"]
 mysql = ["sqlx/mysql"]
 
 [dependencies]
-sa-token-adapter = { version = "0.1.18", path = "../sa-token-adapter" }
+sa-token-adapter = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }
@@ -25,4 +26,12 @@ chrono = { workspace = true }
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "macros", "chrono"] }
 
 [dev-dependencies]
-sa-token-core = { version = "0.1.18", path = "../sa-token-core" }
+sa-token-core = { workspace = true }
+
+[package.metadata.docs.rs]
+features = ["postgres"]
+no-default-features = false
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

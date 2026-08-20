@@ -1,6 +1,7 @@
 // Author: 金书记
 //
-//! 二级认证（对齐 Java StpLogic.openSafe/checkSafe/isSafe）
+//! Secondary authentication (safe window).
+//! 二级认证（安全窗口）。
 
 use std::time::Duration;
 
@@ -8,7 +9,8 @@ use crate::error::{SaTokenError, SaTokenResult};
 use crate::manager::SaTokenManager;
 use crate::token::TokenValue;
 
-/// 默认二级认证业务标识（对齐 Java `DEFAULT_SAFE_AUTH_SERVICE`）
+/// Default secondary-auth service id.
+/// 默认二级认证业务标识。
 pub const DEFAULT_SAFE_SERVICE: &str = "";
 
 /// 二级认证存储标记值
@@ -16,7 +18,7 @@ pub const SAFE_AUTH_VALUE: &str = "ok";
 
 impl SaTokenManager {
     fn safe_key(&self, token: &str, service: &str) -> String {
-        self.config.make_key("safe:", &format!("{}:{}", token, service))
+        self.keys().safe(token, service)
     }
 
     /// 为指定 token 开启二级认证
@@ -38,17 +40,21 @@ impl SaTokenManager {
             Some(Duration::from_secs(safe_time as u64))
         };
 
-        self.storage
-            .set(
+        // 走 Dao 漏斗，避免绕过序列化与键契约。
+        // Go through Dao so serialization and key contracts are not bypassed.
+        self.dao
+            .set_string(
                 &self.safe_key(token.as_str(), service),
                 SAFE_AUTH_VALUE,
                 ttl,
             )
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
+            .await?;
 
         self.event_bus
-            .publish(crate::event::SaTokenEvent::open_safe(token.as_str(), service))
+            .publish(crate::event::SaTokenEvent::open_safe(
+                token.as_str(),
+                service,
+            ))
             .await;
 
         Ok(())
@@ -64,13 +70,12 @@ impl SaTokenManager {
             return Ok(false);
         }
 
-        let value = self
-            .storage
-            .get(&self.safe_key(token.as_str(), service))
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-        Ok(value.is_some())
+        Ok(self
+            .dao
+            .get_string(&self.safe_key(token.as_str(), service))
+            .await?
+            .as_deref()
+            == Some(SAFE_AUTH_VALUE))
     }
 
     /// 校验二级认证；未通过抛出 [`SaTokenError::NotSafe`]
@@ -83,18 +88,23 @@ impl SaTokenManager {
             return Err(SaTokenError::NotSafe(service.to_string()));
         }
 
+        let event = crate::event::SaTokenEvent::safe_verify(token.as_str(), service);
+        self.event_bus.publish(event).await;
+
         Ok(())
     }
 
     /// 关闭二级认证
     pub async fn close_safe(&self, token: &TokenValue, service: &str) -> SaTokenResult<()> {
-        self.storage
+        self.dao
             .delete(&self.safe_key(token.as_str(), service))
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
+            .await?;
 
         self.event_bus
-            .publish(crate::event::SaTokenEvent::close_safe(token.as_str(), service))
+            .publish(crate::event::SaTokenEvent::close_safe(
+                token.as_str(),
+                service,
+            ))
             .await;
 
         Ok(())
@@ -106,10 +116,10 @@ impl SaTokenManager {
         token: &TokenValue,
         service: &str,
     ) -> SaTokenResult<Option<i64>> {
-        match self.storage.ttl(&self.safe_key(token.as_str(), service)).await {
+        match self.dao.ttl(&self.safe_key(token.as_str(), service)).await {
             Ok(Some(d)) => Ok(Some(d.as_secs() as i64)),
             Ok(None) => Ok(None),
-            Err(e) => Err(SaTokenError::StorageError(e.to_string())),
+            Err(e) => Err(e),
         }
     }
 }
@@ -122,10 +132,7 @@ mod tests {
     use std::sync::Arc;
 
     fn manager() -> SaTokenManager {
-        SaTokenManager::new(
-            Arc::new(MemoryStorage::new()),
-            SaTokenConfig::default(),
-        )
+        SaTokenManager::new(Arc::new(MemoryStorage::new()), SaTokenConfig::default())
     }
 
     #[tokio::test]

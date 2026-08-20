@@ -263,8 +263,8 @@
 //!
 //! #[async_trait]
 //! impl DistributedSessionStorage for RedisDistributedStorage {
-//!     async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) 
-//!         -> Result<(), SaTokenError> 
+//!     async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>)
+//!         -> Result<(), SaTokenError>
 //!     {
 //!         let mut conn = self.client.get_async_connection().await?;
 //!         let key = format!("distributed:session:{}", session.session_id);
@@ -298,16 +298,16 @@
 //!
 //! #[async_trait]
 //! impl DistributedSessionStorage for PostgresDistributedStorage {
-//!     async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) 
-//!         -> Result<(), SaTokenError> 
+//!     async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>)
+//!         -> Result<(), SaTokenError>
 //!     {
 //!         let expires_at = ttl.map(|t| Utc::now() + chrono::Duration::from_std(t).unwrap());
 //!         
 //!         sqlx::query!(
-//!             "INSERT INTO distributed_sessions 
+//!             "INSERT INTO distributed_sessions
 //!              (session_id, login_id, token, service_id, attributes, expires_at)
 //!              VALUES ($1, $2, $3, $4, $5, $6)
-//!              ON CONFLICT (session_id) DO UPDATE 
+//!              ON CONFLICT (session_id) DO UPDATE
 //!              SET attributes = $5, last_access = NOW()",
 //!             session.session_id,
 //!             session.login_id,
@@ -362,7 +362,7 @@
 //! ```rust,ignore
 //! // Service B accesses session created by Service A
 //! // 服务 B 访问服务 A 创建的会话
-//! 
+//!
 //! // 1. Verify service identity
 //! // 验证服务身份
 //! let service_cred = manager.verify_service("service-b", request.secret).await?;
@@ -400,9 +400,9 @@
 //! // Monitor user's active sessions
 //! // 监控用户的活跃会话
 //! let sessions = manager.get_sessions_by_login_id(&login_id).await?;
-//! 
+//!
 //! for session in sessions {
-//!     println!("Session: {} from service: {}, last active: {}", 
+//!     println!("Session: {} from service: {}, last active: {}",
 //!         session.session_id,
 //!         session.service_id,
 //!         session.last_access
@@ -445,14 +445,16 @@
 //!    - Monitor for anomalies
 //! ```
 
+use crate::config::SaTokenConfig;
+use crate::dao::SaTokenDao;
 use crate::error::SaTokenError;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use sa_token_adapter::storage::SaStorage;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
 use tokio::sync::RwLock;
 
 /// Distributed session data structure
@@ -464,22 +466,22 @@ use tokio::sync::RwLock;
 pub struct DistributedSession {
     /// Unique session identifier | 唯一 Session 标识符
     pub session_id: String,
-    
+
     /// User login ID | 用户登录 ID
     pub login_id: String,
-    
+
     /// Authentication token | 认证 Token
     pub token: String,
-    
+
     /// ID of the service that created this session | 创建此 Session 的服务 ID
     pub service_id: String,
-    
+
     /// Session creation time | Session 创建时间
     pub create_time: DateTime<Utc>,
-    
+
     /// Last access time | 最后访问时间
     pub last_access: DateTime<Utc>,
-    
+
     /// Session attributes (key-value pairs) | Session 属性（键值对）
     pub attributes: HashMap<String, String>,
 }
@@ -493,16 +495,16 @@ pub struct DistributedSession {
 pub struct ServiceCredential {
     /// Unique service identifier | 唯一服务标识符
     pub service_id: String,
-    
+
     /// Human-readable service name | 可读的服务名称
     pub service_name: String,
-    
+
     /// Service authentication secret key | 服务认证密钥
     pub secret_key: String,
-    
+
     /// Service registration time | 服务注册时间
     pub created_at: DateTime<Utc>,
-    
+
     /// List of permissions this service has | 该服务拥有的权限列表
     pub permissions: Vec<String>,
 }
@@ -520,28 +522,38 @@ pub trait DistributedSessionStorage: Send + Sync {
     /// # Arguments | 参数
     /// * `session` - Session to save | 要保存的 Session
     /// * `ttl` - Time-to-live duration | 生存时间
-    async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) -> Result<(), SaTokenError>;
-    
+    async fn save_session(
+        &self,
+        session: DistributedSession,
+        ttl: Option<Duration>,
+    ) -> Result<(), SaTokenError>;
+
     /// Get a session from storage
     /// 从存储获取 Session
     ///
     /// # Arguments | 参数
     /// * `session_id` - Session identifier | Session 标识符
-    async fn get_session(&self, session_id: &str) -> Result<Option<DistributedSession>, SaTokenError>;
-    
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<DistributedSession>, SaTokenError>;
+
     /// Delete a session from storage
     /// 从存储删除 Session
     ///
     /// # Arguments | 参数
     /// * `session_id` - Session identifier | Session 标识符
     async fn delete_session(&self, session_id: &str) -> Result<(), SaTokenError>;
-    
+
     /// Get all sessions for a specific user
     /// 获取特定用户的所有 Sessions
     ///
     /// # Arguments | 参数
     /// * `login_id` - User login ID | 用户登录 ID
-    async fn get_sessions_by_login_id(&self, login_id: &str) -> Result<Vec<DistributedSession>, SaTokenError>;
+    async fn get_sessions_by_login_id(
+        &self,
+        login_id: &str,
+    ) -> Result<Vec<DistributedSession>, SaTokenError>;
 
     /// 保存服务凭证 | Save a service credential
     /// 用于把 register_service 的凭证持久化到存储
@@ -549,7 +561,10 @@ pub trait DistributedSessionStorage: Send + Sync {
 
     /// 按 service_id 获取服务凭证 | Get a service credential by service_id
     /// 未找到返回 Ok(None)
-    async fn get_credential(&self, service_id: &str) -> Result<Option<ServiceCredential>, SaTokenError>;
+    async fn get_credential(
+        &self,
+        service_id: &str,
+    ) -> Result<Option<ServiceCredential>, SaTokenError>;
 }
 
 /// Distributed session manager
@@ -564,6 +579,12 @@ pub struct DistributedSessionManager {
     service_id: String,
     /// 默认 Session 超时时间
     session_timeout: Duration,
+}
+
+impl std::fmt::Debug for DistributedSessionManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DistributedSessionManager { .. }")
+    }
 }
 
 impl DistributedSessionManager {
@@ -598,7 +619,10 @@ impl DistributedSessionManager {
 
     /// 注册服务凭证（持久化到底层存储）
     /// 返回 Result 以便调用方处理存储错误
-    pub async fn register_service(&self, credential: ServiceCredential) -> Result<(), SaTokenError> {
+    pub async fn register_service(
+        &self,
+        credential: ServiceCredential,
+    ) -> Result<(), SaTokenError> {
         self.storage.save_credential(credential).await
     }
 
@@ -622,9 +646,13 @@ impl DistributedSessionManager {
     /// ```
     /// 校验服务凭证
     /// service_id 存在且 secret_key 匹配时返回凭证，否则返回 PermissionDenied
-    pub async fn verify_service(&self, service_id: &str, secret: &str) -> Result<ServiceCredential, SaTokenError> {
+    pub async fn verify_service(
+        &self,
+        service_id: &str,
+        secret: &str,
+    ) -> Result<ServiceCredential, SaTokenError> {
         if let Some(cred) = self.storage.get_credential(service_id).await?
-            && cred.secret_key == secret
+            && crate::http_basic::ct_eq(cred.secret_key.as_bytes(), secret.as_bytes())
         {
             return Ok(cred);
         }
@@ -665,7 +693,9 @@ impl DistributedSessionManager {
             attributes: HashMap::new(),
         };
 
-        self.storage.save_session(session.clone(), Some(self.session_timeout)).await?;
+        self.storage
+            .save_session(session.clone(), Some(self.session_timeout))
+            .await?;
         Ok(session)
     }
 
@@ -685,7 +715,9 @@ impl DistributedSessionManager {
     /// println!("User: {}", session.login_id);
     /// ```
     pub async fn get_session(&self, session_id: &str) -> Result<DistributedSession, SaTokenError> {
-        self.storage.get_session(session_id).await?
+        self.storage
+            .get_session(session_id)
+            .await?
             .ok_or(SaTokenError::SessionNotFound)
     }
 
@@ -702,7 +734,9 @@ impl DistributedSessionManager {
     /// manager.update_session(session).await?;
     /// ```
     pub async fn update_session(&self, session: DistributedSession) -> Result<(), SaTokenError> {
-        self.storage.save_session(session, Some(self.session_timeout)).await
+        self.storage
+            .save_session(session, Some(self.session_timeout))
+            .await
     }
 
     /// Delete a session
@@ -796,11 +830,7 @@ impl DistributedSessionManager {
     /// ```rust,ignore
     /// manager.remove_attribute("session-id", "temp_data").await?;
     /// ```
-    pub async fn remove_attribute(
-        &self,
-        session_id: &str,
-        key: &str,
-    ) -> Result<(), SaTokenError> {
+    pub async fn remove_attribute(&self, session_id: &str, key: &str) -> Result<(), SaTokenError> {
         let mut session = self.get_session(session_id).await?;
         session.attributes.remove(key);
         session.last_access = Utc::now();
@@ -821,7 +851,10 @@ impl DistributedSessionManager {
     /// let sessions = manager.get_sessions_by_login_id("user123").await?;
     /// println!("User has {} active sessions", sessions.len());
     /// ```
-    pub async fn get_sessions_by_login_id(&self, login_id: &str) -> Result<Vec<DistributedSession>, SaTokenError> {
+    pub async fn get_sessions_by_login_id(
+        &self,
+        login_id: &str,
+    ) -> Result<Vec<DistributedSession>, SaTokenError> {
         self.storage.get_sessions_by_login_id(login_id).await
     }
 
@@ -842,13 +875,29 @@ impl DistributedSessionManager {
         }
         Ok(())
     }
+
+    /// Delete distributed sessions that carry this access token (one device).
+    /// 只删携带该 access token 的分布式会话（单设备），避免误杀其它终端。
+    pub async fn delete_sessions_by_token(
+        &self,
+        login_id: &str,
+        token: &str,
+    ) -> Result<(), SaTokenError> {
+        let sessions = self.storage.get_sessions_by_login_id(login_id).await?;
+        for session in sessions {
+            if crate::http_basic::ct_eq(session.token.as_bytes(), token.as_bytes()) {
+                self.storage.delete_session(&session.session_id).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
-/// In-memory distributed session storage implementation
-/// 内存分布式 Session 存储实现
+/// In-memory distributed session storage (process-local only; not cross-instance).
+/// 内存分布式 Session 存储（仅进程内，不能跨实例）。
 ///
-/// For testing and development purposes
-/// 用于测试和开发目的
+/// For testing and local demos — do not use as shared multi-node storage.
+/// 用于测试与本地演示 —— 不可作为多节点共享存储。
 pub struct InMemoryDistributedStorage {
     /// Sessions 存储: session_id -> DistributedSession
     sessions: Arc<RwLock<HashMap<String, DistributedSession>>>,
@@ -856,6 +905,12 @@ pub struct InMemoryDistributedStorage {
     login_index: Arc<RwLock<HashMap<String, Vec<String>>>>,
     /// 服务凭证: service_id -> ServiceCredential
     credentials: Arc<RwLock<HashMap<String, ServiceCredential>>>,
+}
+
+impl std::fmt::Debug for InMemoryDistributedStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InMemoryDistributedStorage { .. }")
+    }
 }
 
 impl InMemoryDistributedStorage {
@@ -892,26 +947,30 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
     /// In production, use Redis or similar with built-in TTL support.
     /// 内存存储中忽略 TTL（为简化实现）。
     /// 在生产环境中，使用 Redis 或类似的内置 TTL 支持的存储。
-    async fn save_session(&self, session: DistributedSession, _ttl: Option<Duration>) -> Result<(), SaTokenError> {
+    async fn save_session(
+        &self,
+        session: DistributedSession,
+        _ttl: Option<Duration>,
+    ) -> Result<(), SaTokenError> {
         let session_id = session.session_id.clone();
         let login_id = session.login_id.clone();
-        
+
         // 1. Store session in main map
         // 在主映射中存储会话
         let mut sessions = self.sessions.write().await;
         sessions.insert(session_id.clone(), session);
-        
+
         // 2. Update login index for this user
         // 更新此用户的登录索引
         let mut index = self.login_index.write().await;
         let session_list = index.entry(login_id).or_insert_with(Vec::new);
-        
+
         // Add only if not already present (prevent duplicates)
         // 仅在不存在时添加（防止重复）
         if !session_list.contains(&session_id) {
             session_list.push(session_id);
         }
-        
+
         Ok(())
     }
 
@@ -921,7 +980,10 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
     ///
     /// * `Ok(Some(session))` - Session found | 找到会话
     /// * `Ok(None)` - Session not found | 未找到会话
-    async fn get_session(&self, session_id: &str) -> Result<Option<DistributedSession>, SaTokenError> {
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<DistributedSession>, SaTokenError> {
         let sessions = self.sessions.read().await;
         Ok(sessions.get(session_id).cloned())
     }
@@ -948,7 +1010,7 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
                 // Remove this session_id from the list
                 // 从列表中移除此 session_id
                 session_ids.retain(|id| id != session_id);
-                
+
                 // 3. Clean up: remove login_id entry if no sessions left
                 // 清理：如果没有剩余会话，移除 login_id 条目
                 if session_ids.is_empty() {
@@ -974,17 +1036,20 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
     ///
     /// Vector of all active sessions for the user
     /// 用户所有活跃会话的向量
-    async fn get_sessions_by_login_id(&self, login_id: &str) -> Result<Vec<DistributedSession>, SaTokenError> {
+    async fn get_sessions_by_login_id(
+        &self,
+        login_id: &str,
+    ) -> Result<Vec<DistributedSession>, SaTokenError> {
         // 1. Get session IDs from index
         // 从索引中获取会话 IDs
         let index = self.login_index.read().await;
         let session_ids = index.get(login_id).cloned().unwrap_or_default();
-        
+
         // 2. Retrieve full session data
         // 检索完整的会话数据
         let sessions = self.sessions.read().await;
         let mut result = Vec::new();
-        
+
         for session_id in session_ids {
             if let Some(session) = sessions.get(&session_id) {
                 result.push(session.clone());
@@ -994,7 +1059,7 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
             // 注意：如果未找到会话，说明会话已删除但索引未更新
             // 这是内存存储中可接受的小不一致
         }
-        
+
         Ok(result)
     }
 
@@ -1006,197 +1071,122 @@ impl DistributedSessionStorage for InMemoryDistributedStorage {
     }
 
     /// 从内存获取服务凭证
-    async fn get_credential(&self, service_id: &str) -> Result<Option<ServiceCredential>, SaTokenError> {
+    async fn get_credential(
+        &self,
+        service_id: &str,
+    ) -> Result<Option<ServiceCredential>, SaTokenError> {
         let creds = self.credentials.read().await;
         Ok(creds.get(service_id).cloned())
     }
 }
 
-/// 基于 SaStorage 的分布式 Session 存储实现
-/// 把分布式 Session、登录索引、服务凭证统一持久化到任意 SaStorage 后端（Redis / 内存 / 数据库）
-///
-/// # 存储键格式
-/// - Session: `{prefix}dsession:{session_id}`
-/// - 登录索引: `{prefix}dsession:index:{login_id}`
-/// - 服务凭证: `{prefix}dservice:{service_id}`
+/// Persist distributed sessions through SaTokenDao (same serializer and keys as login).
+/// 经 SaTokenDao 持久化分布式会话（与登录共用序列化器和键）。
 pub struct SaStorageDistributedStorage {
-    /// 底层通用 KV 存储
-    storage: Arc<dyn SaStorage>,
-    /// 存储键前缀（应与 SaTokenConfig::storage_key_prefix 保持一致）
-    key_prefix: String,
+    dao: Arc<SaTokenDao>,
+}
+
+impl std::fmt::Debug for SaStorageDistributedStorage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SaStorageDistributedStorage { .. }")
+    }
 }
 
 impl SaStorageDistributedStorage {
-    /// 创建适配器
-    ///
-    /// # 参数
-    /// - `storage`: 底层存储实现（可直接复用全局 SaTokenManager 使用的同一个 storage）
-    /// - `key_prefix`: 存储键前缀，建议传入 `config.storage_key_prefix.clone()` 以保持一致
+    /// `from_dao` — from dao | `from_dao`
+    pub fn from_dao(dao: Arc<SaTokenDao>) -> Self {
+        Self { dao }
+    }
+
+    /// Compatibility wrapper: builds a Dao from raw storage + prefix.
+    /// 兼容包装：从原始存储与前缀构造 Dao。
+    pub fn from_config(storage: Arc<dyn SaStorage>, config: &SaTokenConfig) -> Self {
+        Self::from_dao(Arc::new(SaTokenDao::new(storage, Arc::new(config.clone()))))
+    }
+
+    /// Create a new instance | 创建新实例
     pub fn new(storage: Arc<dyn SaStorage>, key_prefix: impl Into<String>) -> Self {
-        Self {
-            storage,
-            key_prefix: key_prefix.into(),
-        }
-    }
-
-    /// 构造 Session 键：{prefix}dsession:{session_id}
-    fn session_key(&self, session_id: &str) -> String {
-        format!("{}dsession:{}", self.key_prefix, session_id)
-    }
-
-    /// 构造登录索引键：{prefix}dsession:index:{login_id}
-    fn index_key(&self, login_id: &str) -> String {
-        format!("{}dsession:index:{}", self.key_prefix, login_id)
-    }
-
-    /// 构造凭证键：{prefix}dservice:{service_id}
-    fn credential_key(&self, service_id: &str) -> String {
-        format!("{}dservice:{}", self.key_prefix, service_id)
-    }
-
-    /// 读取某用户的登录索引（session_id 列表）
-    /// 不存在时返回空 Vec
-    async fn load_index(&self, index_key: &str) -> Result<Vec<String>, SaTokenError> {
-        match self
-            .storage
-            .get(index_key)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-        {
-            Some(value) => serde_json::from_str(&value).map_err(SaTokenError::SerializationError),
-            None => Ok(Vec::new()),
-        }
-    }
-
-    /// 回写登录索引（永久保存，不设 TTL）
-    async fn save_index(&self, index_key: &str, ids: &[String]) -> Result<(), SaTokenError> {
-        let value = serde_json::to_string(ids).map_err(SaTokenError::SerializationError)?;
-        self.storage
-            .set(index_key, &value, None)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
+        let config = SaTokenConfig {
+            storage_key_prefix: key_prefix.into(),
+            ..SaTokenConfig::default()
+        };
+        Self::from_config(storage, &config)
     }
 }
 
 #[async_trait]
 impl DistributedSessionStorage for SaStorageDistributedStorage {
-    /// 保存 Session
-    /// 1. 写入会话本体（带 TTL，由后端控制过期）
-    /// 2. 更新登录索引（永久保存，去重；过期 session 在读取时被过滤清理）
-    async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) -> Result<(), SaTokenError> {
-        let session_key = self.session_key(&session.session_id);
-        let index_key = self.index_key(&session.login_id);
-        let session_id = session.session_id.clone();
-
-        // 1. 写入会话本体
-        let value = serde_json::to_string(&session).map_err(SaTokenError::SerializationError)?;
-        self.storage
-            .set(&session_key, &value, ttl)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-        // 2. 更新登录索引（去重）
-        let mut ids = self.load_index(&index_key).await?;
-        if !ids.contains(&session_id) {
-            ids.push(session_id);
-            self.save_index(&index_key, &ids).await?;
-        }
+    async fn save_session(
+        &self,
+        session: DistributedSession,
+        ttl: Option<Duration>,
+    ) -> Result<(), SaTokenError> {
+        let session_key = self.dao.keys().distributed_session(&session.session_id);
+        let index_key = self.dao.keys().distributed_session_index(&session.login_id);
+        self.dao.set_object(&session_key, &session, ttl).await?;
+        self.dao
+            .list_push_unique(&index_key, &session.session_id, None)
+            .await?;
         Ok(())
     }
 
-    /// 按 session_id 读取会话
-    /// 未找到或已过期返回 None
-    async fn get_session(&self, session_id: &str) -> Result<Option<DistributedSession>, SaTokenError> {
-        match self
-            .storage
-            .get(&self.session_key(session_id))
+    async fn get_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<DistributedSession>, SaTokenError> {
+        self.dao
+            .get_object(&self.dao.keys().distributed_session(session_id))
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-        {
-            Some(value) => Ok(Some(serde_json::from_str(&value).map_err(SaTokenError::SerializationError)?)),
-            None => Ok(None),
-        }
     }
 
-    /// 删除会话
-    /// 1. 先读出会话以获得 login_id（用于维护索引）
-    /// 2. 删除会话本体
-    /// 3. 从登录索引中移除该 session_id（无剩余则删除整个索引键）
     async fn delete_session(&self, session_id: &str) -> Result<(), SaTokenError> {
         if let Some(session) = self.get_session(session_id).await? {
-            // 1. 删除会话本体
-            self.storage
-                .delete(&self.session_key(session_id))
-                .await
-                .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-            // 2. 从登录索引中移除
-            let index_key = self.index_key(&session.login_id);
-            let mut ids = self.load_index(&index_key).await?;
-            let before = ids.len();
-            ids.retain(|id| id != session_id);
-            if ids.is_empty() {
-                // 无剩余会话则删除整个索引键
-                self.storage
-                    .delete(&index_key)
-                    .await
-                    .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-            } else if ids.len() != before {
-                self.save_index(&index_key, &ids).await?;
+            self.dao
+                .delete(&self.dao.keys().distributed_session(session_id))
+                .await?;
+            let index_key = self.dao.keys().distributed_session_index(&session.login_id);
+            self.dao.list_remove(&index_key, session_id).await?;
+            if self.dao.list_len(&index_key).await? == 0 {
+                self.dao.delete(&index_key).await?;
             }
+        } else {
+            self.dao
+                .delete(&self.dao.keys().distributed_session(session_id))
+                .await?;
         }
         Ok(())
     }
 
-    /// 获取某用户全部会话
-    /// 顺带清理索引中已过期/丢失的 session_id（best-effort 清理，避免索引无限膨胀）
-    async fn get_sessions_by_login_id(&self, login_id: &str) -> Result<Vec<DistributedSession>, SaTokenError> {
-        let index_key = self.index_key(login_id);
-        let ids = self.load_index(&index_key).await?;
-        let original_len = ids.len();
-
-        let mut result = Vec::new();
-        let mut alive_ids = Vec::new();
+    async fn get_sessions_by_login_id(
+        &self,
+        login_id: &str,
+    ) -> Result<Vec<DistributedSession>, SaTokenError> {
+        let index_key = self.dao.keys().distributed_session_index(login_id);
+        let ids = self.dao.list_range(&index_key, 0, None).await?;
+        let mut out = Vec::new();
         for id in ids {
-            // 会话本体可能因 TTL 已过期 → 读不到则视为失效
-            if let Some(session) = self.get_session(&id).await? {
-                result.push(session);
-                alive_ids.push(id);
+            match self.get_session(&id).await? {
+                Some(s) => out.push(s),
+                None => {
+                    self.dao.list_remove(&index_key, &id).await?;
+                }
             }
         }
-
-        // 清理：索引发生收缩时回写
-        if alive_ids.is_empty() {
-            let _ = self.storage.delete(&index_key).await;
-        } else if alive_ids.len() != original_len {
-            let _ = self.save_index(&index_key, &alive_ids).await;
-        }
-
-        Ok(result)
+        Ok(out)
     }
 
-    /// 保存服务凭证（永久保存）
     async fn save_credential(&self, credential: ServiceCredential) -> Result<(), SaTokenError> {
-        let key = self.credential_key(&credential.service_id);
-        let value = serde_json::to_string(&credential).map_err(SaTokenError::SerializationError)?;
-        self.storage
-            .set(&key, &value, None)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
+        let key = self.dao.keys().distributed_service(&credential.service_id);
+        self.dao.set_object(&key, &credential, None).await
     }
 
-    /// 按 service_id 读取服务凭证
-    /// 未找到返回 None
-    async fn get_credential(&self, service_id: &str) -> Result<Option<ServiceCredential>, SaTokenError> {
-        match self
-            .storage
-            .get(&self.credential_key(service_id))
+    async fn get_credential(
+        &self,
+        service_id: &str,
+    ) -> Result<Option<ServiceCredential>, SaTokenError> {
+        self.dao
+            .get_object(&self.dao.keys().distributed_service(service_id))
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-        {
-            Some(value) => Ok(Some(serde_json::from_str(&value).map_err(SaTokenError::SerializationError)?)),
-            None => Ok(None),
-        }
     }
 }
 
@@ -1213,10 +1203,10 @@ mod tests {
             Duration::from_secs(3600),
         );
 
-        let session = manager.create_session(
-            "user1".to_string(),
-            "token1".to_string(),
-        ).await.unwrap();
+        let session = manager
+            .create_session("user1".to_string(), "token1".to_string())
+            .await
+            .unwrap();
 
         let retrieved = manager.get_session(&session.session_id).await.unwrap();
         assert_eq!(retrieved.login_id, "user1");
@@ -1231,18 +1221,24 @@ mod tests {
             Duration::from_secs(3600),
         );
 
-        let session = manager.create_session(
-            "user2".to_string(),
-            "token2".to_string(),
-        ).await.unwrap();
+        let session = manager
+            .create_session("user2".to_string(), "token2".to_string())
+            .await
+            .unwrap();
 
-        manager.set_attribute(
-            &session.session_id,
-            "key1".to_string(),
-            "value1".to_string(),
-        ).await.unwrap();
+        manager
+            .set_attribute(
+                &session.session_id,
+                "key1".to_string(),
+                "value1".to_string(),
+            )
+            .await
+            .unwrap();
 
-        let value = manager.get_attribute(&session.session_id, "key1").await.unwrap();
+        let value = manager
+            .get_attribute(&session.session_id, "key1")
+            .await
+            .unwrap();
         assert_eq!(value, Some("value1".to_string()));
     }
 
@@ -1265,7 +1261,10 @@ mod tests {
 
         manager.register_service(credential.clone()).await.unwrap();
 
-        let verified = manager.verify_service("service2", "secret123").await.unwrap();
+        let verified = manager
+            .verify_service("service2", "secret123")
+            .await
+            .unwrap();
         assert_eq!(verified.service_id, "service2");
 
         let result = manager.verify_service("service2", "wrong_secret").await;
@@ -1281,8 +1280,14 @@ mod tests {
             Duration::from_secs(3600),
         );
 
-        manager.create_session("user3".to_string(), "token1".to_string()).await.unwrap();
-        manager.create_session("user3".to_string(), "token2".to_string()).await.unwrap();
+        manager
+            .create_session("user3".to_string(), "token1".to_string())
+            .await
+            .unwrap();
+        manager
+            .create_session("user3".to_string(), "token2".to_string())
+            .await
+            .unwrap();
 
         let sessions = manager.get_sessions_by_login_id("user3").await.unwrap();
         assert_eq!(sessions.len(), 2);

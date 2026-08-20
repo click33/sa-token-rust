@@ -2,6 +2,7 @@
 name = "sa-token-adapter"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -18,3 +19,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 http = { workspace = true }
 urlencoding = { workspace = true }
+base64 = "0.22.1"
+fory = { workspace = true, optional = true }
+
+[features]
+default = []
+fory = ["dep:fory"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

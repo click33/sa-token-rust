@@ -25,8 +25,8 @@ pub enum ApiError {
     InternalError(String),
 }
 
-// 实现 From<SaTokenError> for ApiError
-// SaTokenError 是从 sa_token_plugin_poem 重新导出的 sa_token_core::SaTokenError
+// sa_token_plugin_poem re-export 了 sa_token_core::SaTokenError，
+// 二者是同一类型，只能实现一次 From（此前两份 impl 触发 E0119）。
 impl From<SaTokenError> for ApiError {
     fn from(err: SaTokenError) -> Self {
         match err {
@@ -38,25 +38,6 @@ impl From<SaTokenError> for ApiError {
                 ApiError::Forbidden("Permission denied".to_string())
             }
             SaTokenError::RoleDenied(_) => {
-                ApiError::Forbidden("Role required".to_string())
-            }
-            _ => ApiError::InternalError(format!("Authentication error: {}", err)),
-        }
-    }
-}
-
-// 实现 From<sa_token_core::SaTokenError> for ApiError（宏返回的类型）
-impl From<sa_token_core::SaTokenError> for ApiError {
-    fn from(err: sa_token_core::SaTokenError) -> Self {
-        match err {
-            sa_token_core::SaTokenError::NotLogin => {
-                ApiError::Unauthorized("User not logged in".to_string())
-            }
-            sa_token_core::SaTokenError::PermissionDenied 
-            | sa_token_core::SaTokenError::PermissionDeniedDetail(_) => {
-                ApiError::Forbidden("Permission denied".to_string())
-            }
-            sa_token_core::SaTokenError::RoleDenied(_) => {
                 ApiError::Forbidden("Role required".to_string())
             }
             _ => ApiError::InternalError(format!("Authentication error: {}", err)),
@@ -146,8 +127,18 @@ async fn main() -> Result<(), std::io::Error> {
     init_test_permissions().await;
     
     // 4. 创建路由
+    // Anonymous routes must be excluded; #[sa_ignore] does not skip this layer.
+    // 匿名路由必须排除；#[sa_ignore] 不会跳过本层。
+    let path_auth = PathAuthConfig::new()
+        .include(vec!["/**".into()])
+        .exclude(vec![
+            "/".into(),
+            "/api/health".into(),
+            "/api/auth/login".into(),
+        ]);
+
     let app = Route::new()
-        // 公开接口（不需要登录）
+        // 公开接口（路径放行靠 PathAuthConfig::exclude）
         .at("/", poem::get(index))
         .at("/api/health", poem::get(health_check))
         .at("/api/auth/login", poem::post(login))
@@ -161,8 +152,8 @@ async fn main() -> Result<(), std::io::Error> {
         .at("/api/admin/users", poem::get(list_users))
         .at("/api/admin/config", poem::get(admin_config))
         
-        // 应用中间件
-        .with(SaTokenMiddleware::new(sa_token_state.clone()))
+        // 应用中间件（Poem：用 SaTokenLayer::with_path_auth，非 Middleware::new）
+        .with(SaTokenLayer::with_path_auth(sa_token_state.clone(), path_auth))
         .data(sa_token_state);
     
     tracing::info!("📡 服务器运行在 http://127.0.0.1:3000");

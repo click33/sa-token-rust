@@ -1,108 +1,373 @@
 // Author: 金书记
 //
-//! Token 管理器 - sa-token 的核心入口
+//! sa-token 管理器：对外 API 门面，业务逻辑委托给 service / repository 层。
 
 use std::sync::Arc;
-use chrono::{DateTime, Duration, Utc};
-use sa_token_adapter::storage::SaStorage;
-use crate::config::{LogoutMode, ReplacedLoginExitMode, SaTokenConfig};
-use crate::error::{SaTokenError, SaTokenResult};
-use crate::token::{TokenInfo, TokenValue, TokenGenerator};
-use crate::token::map::{
-    TOKEN_MAP_BE_REPLACED, TOKEN_MAP_KICK_OUT, is_kick_out_marker, is_replaced_marker,
-};
-use crate::session::SaSession;
-use crate::event::{SaTokenEventBus, SaTokenEvent};
-use crate::online::OnlineManager;
-use crate::distributed::DistributedSessionManager;
-use crate::nonce::NonceManager;
-use crate::refresh::RefreshTokenManager;
-use crate::stp_interface::StpInterface;
 
-/// sa-token 管理器
+use chrono::{DateTime, Utc};
+use sa_token_adapter::storage::SaStorage;
+
+use crate::config::SaTokenConfig;
+use crate::dao::SaTokenDao;
+use crate::distributed::DistributedSessionManager;
+use crate::error::{SaTokenError, SaTokenResult};
+use crate::event::SaTokenEventBus;
+use crate::keys::{AccountNs, LOGIN_TYPE_DEFAULT, LoginId, SaKeyLayout, SaKeys};
+use crate::online::OnlineManager;
+use crate::permission::PermissionMatcher;
+use crate::repository::{GrantRepo, SessionRepo, TokenRepo};
+use crate::service::{AuthService, AuthzService, LoginRequest};
+use crate::session::SaSession;
+use crate::stp_interface::StpInterface;
+use crate::token::{TokenInfo, TokenValue};
+
+/// sa-token 管理器：对外 API 门面，业务逻辑委托给 service / repository 层。
+///
+/// The sa-token manager: a thin facade delegating to the service and
+/// repository layers.
 #[derive(Clone)]
 pub struct SaTokenManager {
-    /// 底层存储适配器
+    /// 底层存储适配器。
+    ///
+    /// 与 `dao` 内部持有的是**同一个 `Arc`**，仅为兼容 crate 内既有的字段访问
+    /// （`manager.rs` 单测与 `nonce.rs` / `refresh.rs` 等模块直接用 `self.storage`）。
+    ///
+    /// Shares the very same `Arc` as `dao`, kept only so existing in-crate field
+    /// accesses keep compiling.
     pub(crate) storage: Arc<dyn SaStorage>,
-    /// 配置信息
-    pub config: SaTokenConfig,
-    /// 事件总线
+    /// 对外兼容：`manager.config.token_name` 经 Deref 仍可用。
+    /// Public field kept for compatibility; `Arc` derefs to `SaTokenConfig`.
+    /// 构建期只包装一次，Clone Manager 只加引用计数，不再深拷贝配置。
+    /// Wrapped once at construction; cloning the manager is a refcount bump.
+    pub config: Arc<SaTokenConfig>,
+    /// 键构造器：A3 契约要求持有而非每次 from_config（B1-1）
+    keys: SaKeys,
+    /// 事件总线 | Event bus
     pub(crate) event_bus: SaTokenEventBus,
-    /// 在线用户管理器
+    /// 存储访问层 | Storage access layer
+    pub(crate) dao: Arc<SaTokenDao>,
+    /// Token 仓储 | Token repository
+    token_repo: Arc<TokenRepo>,
+    /// Session 仓储 | Session repository
+    session_repo: Arc<SessionRepo>,
+    /// 授权仓储（纯存储；随 dao 变化重建）| Grant repository (storage only)
+    grant_repo: Arc<GrantRepo>,
+    /// 授权服务：权限/角色/封禁回落的唯一入口（随 stp_interface / matcher / 配置重建）
+    /// Authorization service: the single entry point for grants and the ban
+    /// fallback; rebuilt when the data source, matchers or config change.
+    authz_service: Arc<AuthzService>,
+    /// 认证服务（随 online_manager 变化重建）| Auth service, rebuilt with online_manager
+    auth_service: Arc<AuthService>,
+    /// 自定义权限匹配策略；`None` 表示使用默认分段匹配器。
+    /// Custom permission matcher, `None` for the default segment matcher.
+    perm_matcher: Option<Arc<dyn PermissionMatcher>>,
+    /// 自定义角色匹配策略；`None` 表示按 `config.role_wildcard` 选择。
+    /// Custom role matcher, `None` to pick exact/segment matching per config.
+    role_matcher: Option<Arc<dyn PermissionMatcher>>,
+    /// 在线用户管理器 | Online user manager
     online_manager: Option<Arc<OnlineManager>>,
-    /// 分布式 Session 管理器
+    /// 分布式 Session 管理器 | Distributed session manager
     distributed_manager: Option<Arc<DistributedSessionManager>>,
-    /// 权限/角色/封禁数据源回调
+    /// 权限/角色数据源回调 | Permission/role data source callback
     pub(crate) stp_interface: Option<Arc<dyn StpInterface>>,
 }
 
+impl std::fmt::Debug for SaTokenManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SaTokenManager { .. }")
+    }
+}
+
 impl SaTokenManager {
-    /// 创建新的管理器实例
+    /// 创建管理器实例。
+    ///
+    /// 配置只包装一次进 `Arc`，此后各层共享，Clone Manager 不再深拷贝配置。
+    /// Config is wrapped once into `Arc`; cloning the manager no longer deep-copies it.
     pub fn new(storage: Arc<dyn SaStorage>, config: SaTokenConfig) -> Self {
+        let config = Arc::new(config);
+        let keys = SaKeys::from_config(&config);
+        let dao = Arc::new(SaTokenDao::new(storage.clone(), config.clone()));
+        let event_bus = SaTokenEventBus::new();
+
+        let token_repo = Arc::new(TokenRepo::new(dao.clone(), config.clone()));
+        let session_repo = Arc::new(SessionRepo::new(dao.clone(), config.clone()));
+        let grant_repo = Arc::new(GrantRepo::new(dao.clone()));
+
+        let authz_service = Arc::new(AuthzService::new(
+            grant_repo.clone(),
+            &config,
+            event_bus.clone(),
+            None,
+        ));
+
+        let auth_service = Arc::new(AuthService::new(
+            dao.clone(),
+            config.clone(),
+            token_repo.clone(),
+            session_repo.clone(),
+            event_bus.clone(),
+            None,
+            None,
+        ));
+
         Self {
             storage,
             config,
-            event_bus: SaTokenEventBus::new(),
+            keys,
+            event_bus,
+            dao,
+            token_repo,
+            session_repo,
+            grant_repo,
+            authz_service,
+            auth_service,
+            perm_matcher: None,
+            role_matcher: None,
             online_manager: None,
             distributed_manager: None,
             stp_interface: None,
         }
     }
 
+    /// 重建依赖「后置注入项」的组件（修 B1-10、B2-4）。
+    ///
+    /// 授权链路一并重建：`GrantRepo` 随 `dao`，`AuthzService` 随
+    /// `stp_interface` / matcher / 配置。重建意味着新实例缓存为空，
+    /// 恰好满足「切换数据源后必须失效缓存」的要求。
+    ///
+    /// Rebuilds components that depend on post-construction injection. The
+    /// authorization chain is rebuilt too; a fresh instance starts with an
+    /// empty cache — exactly what "invalidate on data-source swap" requires.
+    fn rebuild_services(&mut self) {
+        self.grant_repo = Arc::new(GrantRepo::new(self.dao.clone()));
+
+        let mut authz = AuthzService::new(
+            self.grant_repo.clone(),
+            &self.config,
+            self.event_bus.clone(),
+            self.stp_interface.clone(),
+        );
+        if let Some(matcher) = self.perm_matcher.clone() {
+            authz = authz.with_permission_matcher(matcher);
+        }
+        if let Some(matcher) = self.role_matcher.clone() {
+            authz = authz.with_role_matcher(matcher);
+        }
+        self.authz_service = Arc::new(authz);
+
+        self.auth_service = Arc::new(AuthService::new(
+            self.dao.clone(),
+            self.config.clone(),
+            self.token_repo.clone(),
+            self.session_repo.clone(),
+            self.event_bus.clone(),
+            self.online_manager.clone(),
+            self.distributed_manager.clone(),
+        ));
+    }
+
+    /// 配置变更后重建 keys → dao → 仓储 → 服务整条链路。
+    /// Rebuild keys → dao → repos → services after a config change.
+    fn rebuild_config_chain(&mut self) {
+        // 配置已是 Arc；只重建依赖它的键与仓储，不再二次包装。
+        // Config is already Arc; rebuild keys/repos only.
+        self.keys = SaKeys::from_config(&self.config);
+        self.dao = Arc::new(SaTokenDao::new(self.storage.clone(), self.config.clone()));
+        self.token_repo = Arc::new(TokenRepo::new(self.dao.clone(), self.config.clone()));
+        self.session_repo = Arc::new(SessionRepo::new(self.dao.clone(), self.config.clone()));
+        self.rebuild_services();
+    }
+
+    /// 运行时替换存储键布局（主要用于测试与迁移工具）
+    pub fn with_key_layout(mut self, layout: SaKeyLayout) -> Self {
+        Arc::make_mut(&mut self.config).key_layout = layout;
+        self.rebuild_config_chain();
+        self
+    }
+
+    /// 替换序列化器（如启用 fory）。
+    ///
+    /// 显式复用原 `event_bus`，避免丢弃已注册的监听器。
+    pub fn with_serializer(
+        mut self,
+        serializer: sa_token_adapter::serializer::SharedSerializer,
+    ) -> Self {
+        Arc::make_mut(&mut self.config).serializer = serializer;
+        self.rebuild_config_chain();
+        self
+    }
+
+    /// 注册权限/角色数据源 | Register the permission/role data source
     pub fn with_stp_interface(mut self, iface: Arc<dyn StpInterface>) -> Self {
         self.stp_interface = Some(iface);
+        self.rebuild_services();
         self
     }
-    
+
+    /// Replace the permission matcher used by AuthzService.
+    /// 替换 AuthzService 使用的权限匹配器。
+    pub fn with_permission_matcher(mut self, matcher: Arc<dyn PermissionMatcher>) -> Self {
+        self.perm_matcher = Some(matcher);
+        self.rebuild_services();
+        self
+    }
+
+    /// 替换角色匹配策略（默认按 `config.role_wildcard` 选择精确/分段匹配）。
+    /// Replaces the role matching strategy (default follows `config.role_wildcard`).
+    pub fn with_role_matcher(mut self, matcher: Arc<dyn PermissionMatcher>) -> Self {
+        self.role_matcher = Some(matcher);
+        self.rebuild_services();
+        self
+    }
+
+    /// 注册在线用户管理器 | Register the online user manager
     pub fn with_online_manager(mut self, manager: Arc<OnlineManager>) -> Self {
         self.online_manager = Some(manager);
+        self.rebuild_services();
         self
     }
-    
+
+    /// 注册分布式 Session 管理器 | Register the distributed session manager
     pub fn with_distributed_manager(mut self, manager: Arc<DistributedSessionManager>) -> Self {
         self.distributed_manager = Some(manager);
+        self.rebuild_services();
         self
     }
-    
-    pub fn online_manager(&self) -> Option<&Arc<OnlineManager>> {
-        self.online_manager.as_ref()
+
+    /// Attach a Dao-backed online manager (cross-instance presence).
+    /// 挂上基于 Dao 的在线管理器（跨实例 presence）。
+    pub fn with_distributed_online(mut self) -> Self {
+        self.online_manager = Some(Arc::new(OnlineManager::distributed(self.dao.clone())));
+        self.rebuild_services();
+        self
     }
-    
-    pub fn distributed_manager(&self) -> Option<&Arc<DistributedSessionManager>> {
-        self.distributed_manager.as_ref()
+
+    /// Start optional background cleanup (disabled unless `CleanupConfig.enabled`).
+    /// 启动可选后台清理（除非 `CleanupConfig.enabled` 否则不跑）。
+    pub fn start_background_cleanup(
+        &self,
+        config: crate::cleanup::CleanupConfig,
+    ) -> crate::cleanup::BackgroundCleanupTask {
+        let nonce = Arc::new(crate::nonce::NonceManager::from_dao(
+            self.dao.clone(),
+            if self.config.nonce_timeout > 0 {
+                self.config.nonce_timeout
+            } else {
+                60
+            },
+        ));
+        crate::cleanup::BackgroundCleanupTask::spawn(
+            config,
+            Some(nonce),
+            self.online_manager.clone(),
+        )
     }
-    
-    /// 获取事件总线的引用
+
+    /// 注入共享事件总线（支持多 Manager 共享 / 测试 mock）
+    ///
+    /// Injects a shared event bus (supports multi-Manager sharing / test mocking).
+    ///
+    /// # 示例 | Example
+    /// ```rust,ignore
+    /// let shared_bus = SaTokenEventBus::with_config(EventBusConfig {
+    ///     dispatch_mode: DispatchMode::Detached,
+    ///     listener_timeout: Some(Duration::from_secs(10)),
+    /// });
+    /// let mgr1 = SaTokenManager::new(storage1, config1).with_event_bus(shared_bus.clone());
+    /// let mgr2 = SaTokenManager::new(storage2, config2).with_event_bus(shared_bus.clone());
+    /// shared_bus.register(Arc::new(MyListener));
+    /// ```
+    pub fn with_event_bus(mut self, event_bus: SaTokenEventBus) -> Self {
+        self.event_bus = event_bus.clone();
+        self.rebuild_services();
+        self
+    }
+
+    // ---------- 访问器 | Accessors ----------
+
+    /// 存储键构造器（A3 契约：返回引用，避免热路径克隆）
+    #[inline]
+    pub fn keys(&self) -> &SaKeys {
+        &self.keys
+    }
+
+    /// 底层存储 | Underlying storage
+    pub fn storage(&self) -> &Arc<dyn SaStorage> {
+        &self.storage
+    }
+
+    /// 存储访问层 | Storage access layer
+    pub fn dao(&self) -> &Arc<SaTokenDao> {
+        &self.dao
+    }
+
+    /// 当前序列化器 | Current serializer
+    pub fn serializer(&self) -> &sa_token_adapter::serializer::SharedSerializer {
+        &self.config.serializer
+    }
+
+    /// 认证服务 | Authentication service
+    pub fn auth_service(&self) -> &Arc<AuthService> {
+        &self.auth_service
+    }
+
+    /// Token 仓储 | Token repository
+    pub fn token_repo(&self) -> &Arc<TokenRepo> {
+        &self.token_repo
+    }
+
+    /// Session 仓储 | Session repository
+    pub fn session_repo(&self) -> &Arc<SessionRepo> {
+        &self.session_repo
+    }
+
+    /// 授权服务：权限/角色的读写与校验入口 | Authorization service
+    pub fn authz_service(&self) -> &Arc<AuthzService> {
+        &self.authz_service
+    }
+
+    /// 授权仓储（**纯存储**，绕过数据源优先级与缓存失效）。
+    /// 请改用 [`authz_service()`](Self::authz_service)。
+    ///
+    /// The storage-only grant repository, bypassing data-source precedence and
+    /// cache invalidation. Use `authz_service()` instead.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use SaTokenManager::authz_service() so cache invalidation and StpInterface precedence are honoured"
+    )]
+    pub fn grant_repo(&self) -> &Arc<GrantRepo> {
+        &self.grant_repo
+    }
+
+    /// 事件总线 | Event bus
     pub fn event_bus(&self) -> &SaTokenEventBus {
         &self.event_bus
     }
-    
-    /// 登录：为指定账号创建 token
-    pub async fn login(&self, login_id: impl Into<String>) -> SaTokenResult<TokenValue> {
-        self.login_with_options(login_id, None, None, None, None, None).await
+
+    /// 在线用户管理器 | Online user manager
+    pub fn online_manager(&self) -> Option<&Arc<OnlineManager>> {
+        self.online_manager.as_ref()
     }
-    
-    /// 登录：为指定账号创建 token（支持自定义 TokenInfo 字段）
-    /// 
-    /// # 参数 | Parameters
-    /// * `login_id` - 登录用户 ID | Login user ID
-    /// * `login_type` - 登录类型（如 "user", "admin"）| Login type (e.g., "user", "admin")
-    /// * `device` - 设备标识 | Device identifier
-    /// * `extra_data` - 额外数据 | Extra data
-    /// * `nonce` - 防重放攻击的一次性令牌 | One-time token for replay attack prevention
-    /// * `expire_time` - 自定义过期时间（如果为 None，则使用配置的过期时间）| Custom expiration time (if None, use configured timeout)
-    /// 
-    /// # 示例 | Example
-    /// ```rust,ignore
-    /// let token = manager.login_with_options(
-    ///     "user_123",
-    ///     Some("admin".to_string()),
-    ///     Some("iPhone".to_string()),
-    ///     Some(json!({"ip": "192.168.1.1"})),
-    ///     Some("nonce_123".to_string()),
-    ///     None,
-    /// ).await?;
-    /// ```
+
+    /// 分布式 Session 管理器 | Distributed session manager
+    pub fn distributed_manager(&self) -> Option<&Arc<DistributedSessionManager>> {
+        self.distributed_manager.as_ref()
+    }
+
+    /// 账号命名空间（crate 内部使用，A3 契约返回 AccountNs）
+    pub(crate) fn account_ns(&self, login_type: &str, login_id: &str) -> AccountNs {
+        SaKeys::account_ns(login_type, &LoginId::new(login_id))
+    }
+
+    // ---------- 登录 / 登出 / 踢人 ----------
+
+    /// 登录：为指定账号创建 token | Log in and issue a token
+    pub async fn login(&self, login_id: impl Into<String>) -> SaTokenResult<TokenValue> {
+        self.auth_service.login(LoginRequest::new(login_id)).await
+    }
+
+    /// 登录（完整可选参数）。签名保持不变以维持对外兼容，
+    /// 内部转换为 `LoginRequest` 后委托 `AuthService`。
     pub async fn login_with_options(
         &self,
         login_id: impl Into<String>,
@@ -112,616 +377,201 @@ impl SaTokenManager {
         nonce: Option<String>,
         expire_time: Option<DateTime<Utc>>,
     ) -> SaTokenResult<TokenValue> {
-        let login_id = login_id.into();
-        
-        // 生成 token（支持 JWT，如果有 extra_data 则签入 token）
-        let token = match &extra_data {
-            Some(extra) => TokenGenerator::generate_with_login_id_and_extra(&self.config, &login_id, extra),
-            None => TokenGenerator::generate_with_login_id(&self.config, &login_id),
-        };
-        
-        // 创建 token 信息
-        let mut token_info = TokenInfo::new(token.clone(), login_id.clone());
-        
-        // 设置登录类型
-        token_info.login_type = login_type.unwrap_or_else(|| "default".to_string());
-        
-        // 设置设备标识
-        if let Some(device_str) = device {
-            token_info.device = Some(device_str);
+        let mut req = LoginRequest::new(login_id);
+        if let Some(lt) = login_type {
+            req = req.login_type(lt);
         }
-        
-        // 设置额外数据
-        if let Some(extra) = extra_data {
-            token_info.extra_data = Some(extra);
+        if let Some(d) = device {
+            req = req.device(d);
         }
-        
-        // 设置 nonce
-        if let Some(nonce_str) = nonce {
-            token_info.nonce = Some(nonce_str);
+        if let Some(e) = extra_data {
+            req = req.extra_data(e);
         }
-        
-        // 设置过期时间
-        if let Some(custom_expire_time) = expire_time {
-            token_info.expire_time = Some(custom_expire_time);
+        if let Some(n) = nonce {
+            req = req.nonce(n);
         }
-        // 注意：如果 expire_time 为 None，login_with_token_info 会自动使用配置的过期时间
-        
-        // 调用底层方法
-        self.login_with_token_info(token_info).await
+        if let Some(t) = expire_time {
+            req = req.expire_time(t);
+        }
+        self.auth_service.login(req).await
     }
-    
-    /// 登录：使用完整的 TokenInfo 对象创建 token
-    /// 
-    /// # 参数 | Parameters
-    /// * `token_info` - 完整的 TokenInfo 对象，包含所有 token 信息 | Complete TokenInfo object containing all token information
-    /// 
-    /// # 说明 | Notes
-    /// * TokenInfo 中的 `token` 字段将被使用（如果已设置），否则会自动生成
-    /// * TokenInfo 中的 `login_id` 字段必须设置
-    /// * 如果 `expire_time` 为 None，将使用配置的过期时间
-    /// * The `token` field in TokenInfo will be used (if set), otherwise will be auto-generated
-    /// * The `login_id` field in TokenInfo must be set
-    /// * If `expire_time` is None, will use configured timeout
-    /// 
-    /// # 示例 | Example
-    /// ```rust,ignore
-    /// use sa_token_core::token::{TokenInfo, TokenValue};
-    /// use chrono::Utc;
-    /// 
-    /// let mut token_info = TokenInfo::new(
-    ///     TokenValue::new("custom_token_123"),
-    ///     "user_123"
-    /// );
-    /// token_info.login_type = "admin".to_string();
-    /// token_info.device = Some("iPhone".to_string());
-    /// token_info.extra_data = Some(json!({"ip": "192.168.1.1"}));
-    /// 
-    /// let token = manager.login_with_token_info(token_info).await?;
-    /// ```
-    pub async fn login_with_token_info(&self, mut token_info: TokenInfo) -> SaTokenResult<TokenValue> {
-        let login_id = token_info.login_id.clone();
-        
-        // 如果 token_info 中没有 token，则生成一个
-        let token = if token_info.token.as_str().is_empty() {
-            TokenGenerator::generate_with_login_id(&self.config, &login_id)
-        } else {
-            token_info.token.clone()
-        };
-        
-        // 更新 token_info 中的 token
-        token_info.token = token.clone();
-        
-        // 更新最后活跃时间为当前时间
-        token_info.update_active_time();
-        
-        // 如果过期时间为 None，使用配置的过期时间
-        let now = Utc::now();
-        if token_info.expire_time.is_none()
-            && let Some(timeout) = self.config.timeout_duration() {
-                token_info.expire_time = Some(now + Duration::from_std(timeout).unwrap());
-            }
-        
-        // 确保登录类型不为空
-        if token_info.login_type.is_empty() {
-            token_info.login_type = "default".to_string();
+
+    /// 登录：使用完整 TokenInfo（SSO / 自定义 token 场景）。
+    pub async fn login_with_token_info(&self, token_info: TokenInfo) -> SaTokenResult<TokenValue> {
+        let mut req = LoginRequest::new(token_info.login_id.as_ref())
+            .login_type(token_info.login_type.as_ref());
+        if let Some(d) = token_info.device.clone() {
+            req = req.device(d);
         }
-        
-        // 计算 login_id -> token 映射键（非并发踢旧与写入映射均依赖此键）
-        let login_token_key = self.login_token_mapping_key(&login_id, &token_info.login_type);
-
-        // is_share：同 login_id + login_type 复用已有 token
-        if self.config.is_share {
-            if let Ok(Some(existing)) = self.storage.get(&login_token_key).await {
-                let existing_token = TokenValue::new(existing);
-                if self.is_valid(&existing_token).await {
-                    return Ok(existing_token);
-                }
-            }
+        if let Some(e) = token_info.extra_data.clone() {
+            req = req.extra_data(e);
         }
-
-        // 启用 nonce 时：登录前校验并消费一次性 nonce，防止重放
-        if self.config.enable_nonce
-            && let Some(ref nonce_str) = token_info.nonce {
-                let nonce_timeout = if self.config.nonce_timeout > 0 {
-                    self.config.nonce_timeout
-                } else {
-                    self.config.timeout
-                };
-                let nonce_mgr = NonceManager::new(self.storage.clone(), nonce_timeout);
-                nonce_mgr.validate_and_consume(nonce_str, &login_id).await?;
-            }
-
-        // 非并发登录：顶旧 token（replaced）或拒绝新登录
-        if !self.config.is_concurrent
-            && let Ok(Some(old_token)) = self.storage.get(&login_token_key).await
-            && old_token != token.as_str() {
-                match self.config.replaced_login_exit_mode {
-                    ReplacedLoginExitMode::OldDevice => {
-                        self.replaced_by_token(&TokenValue::new(old_token)).await?;
-                    }
-                    ReplacedLoginExitMode::NewDevice => {
-                        return Err(SaTokenError::AccountReplaced);
-                    }
-                }
-            }
-
-        // 启用 Refresh Token 时预生成并写入 TokenInfo
-        let refresh_mgr = if self.config.enable_refresh_token {
-            Some(RefreshTokenManager::new(
-                self.storage.clone(),
-                Arc::new(self.config.clone()),
-            ))
-        } else {
-            None
-        };
-        if let Some(ref mgr) = refresh_mgr {
-            let rt = mgr.generate(&login_id);
-            token_info.refresh_token = Some(rt);
-            if self.config.refresh_token_timeout > 0 {
-                token_info.refresh_token_expire_time = Some(
-                    Utc::now() + Duration::seconds(self.config.refresh_token_timeout),
-                );
-            }
+        if let Some(n) = token_info.nonce.clone() {
+            req = req.nonce(n);
         }
-        
-        // 存储 token 信息
-        let key = self.config.make_key("token:", token.as_str());
-        let value = serde_json::to_string(&token_info)
-            .map_err(SaTokenError::SerializationError)?;
-        
-        self.storage.set(&key, &value, self.config.timeout_duration()).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-        
-        // 保存 login_id 到 token 的映射
-        self.storage.set(&login_token_key, token.as_str(), self.config.timeout_duration()).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-        // token -> login_id 反向映射（kickout/replaced 标记依赖此键）
-        self.save_token_id_mapping(token.as_str(), &login_id).await?;
-
-        let account_ns = self.account_ns(&token_info.login_type, &login_id);
-
-        // 维护多设备 token 列表（并发场景下 get_all_tokens_by_login_id 依赖此索引）
-        self.append_token_index(&account_ns, token.as_str()).await?;
-
-        // 在 Account-Session 上记录本次登录的终端信息
-        {
-            let mut session = self.get_session(&account_ns).await?;
-            let mut terminal = crate::session::SaTerminalInfo::new(
-                token.as_str(),
-                token_info.device.as_deref().unwrap_or(""),
-            );
-            if let Some(extra) = token_info.extra_data.clone() {
-                terminal = terminal.with_extra_data(extra);
-            }
-            session.add_terminal(terminal);
-            self.save_session(&session).await?;
+        if let Some(t) = token_info.expire_time {
+            req = req.expire_time(t);
         }
-
-        self.enforce_max_login_count(&account_ns).await?;
-
-        if self.config.right_now_create_token_session {
-            let session = SaSession::new(format!("token-session:{}", token.as_str()));
-            let _ = self.save_token_session(&token, &session).await;
+        if !token_info.token.as_str().is_empty() {
+            req = req.preset_token(token_info.token.as_str());
         }
-
-        // 持久化 refresh token 与 access token 的关联
-        if let Some(ref mgr) = refresh_mgr
-            && let Some(ref rt) = token_info.refresh_token {
-                mgr.store_with_extra(
-                    rt,
-                    token.as_str(),
-                    &login_id,
-                    token_info.extra_data.as_ref(),
-                )
-                .await?;
-            }
-        
-        // 触发登录事件
-        let event = SaTokenEvent::login(login_id.clone(), token.as_str())
-            .with_login_type(&token_info.login_type);
-        self.event_bus.publish(event).await;
-        
-        Ok(token)
+        self.auth_service.login(req).await
     }
-    
-    /// 登出：删除指定 token（LOGOUT 模式）
+
+    /// 登出指定 token | Log out a token
     pub async fn logout(&self, token: &TokenValue) -> SaTokenResult<()> {
-        self.logout_internal(token, LogoutMode::Logout, self.config.is_logout_keep_token_session)
+        self.auth_service
+            .logout(token, self.config.is_logout_keep_token_session)
             .await
     }
 
-    /// 踢人下线（KICKOUT 模式：保留映射标记 -5）
+    /// 踢下线指定 token（标记 -5）| Kick out a token, marker `-5`
     pub async fn kick_out_by_token(&self, token: &TokenValue) -> SaTokenResult<()> {
-        self.logout_internal(token, LogoutMode::KickOut, self.config.is_logout_keep_token_session)
+        self.auth_service
+            .kick_out_by_token(token, self.config.is_logout_keep_token_session)
             .await
     }
 
-    /// 顶号下线（REPLACED 模式：保留映射标记 -4）
+    /// 顶下线指定 token（标记 -4）| Replace a token, marker `-4`
     pub async fn replaced_by_token(&self, token: &TokenValue) -> SaTokenResult<()> {
-        self.logout_internal(token, LogoutMode::Replaced, self.config.is_logout_keep_token_session)
+        self.auth_service.logout_replaced(token).await
+    }
+
+    /// 按账号登出全部 token | Log out every token of an account
+    pub async fn logout_by_login_id(&self, login_type: &str, login_id: &str) -> SaTokenResult<()> {
+        self.auth_service
+            .logout_by_login_id(login_type, login_id)
             .await
     }
 
-    async fn logout_internal(
+    /// 按账号踢下线全部 token | Kick out every token of an account
+    pub async fn kick_out(&self, login_type: &str, login_id: &str) -> SaTokenResult<()> {
+        self.auth_service.kick_out(login_type, login_id).await
+    }
+
+    /// 读取并校验 token | Read and validate a token
+    pub async fn get_token_info(&self, token: &TokenValue) -> SaTokenResult<TokenInfo> {
+        self.auth_service.get_token_info(token).await
+    }
+
+    /// 按 login_type + login_id 读取当前映射 token
+    /// Read the mapped token for login_type + login_id
+    pub async fn get_token_by_login_id(
+        &self,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<TokenValue> {
+        match self
+            .token_repo()
+            .get_login_mapping(login_type, login_id)
+            .await?
+        {
+            Some(token_str) => Ok(TokenValue::new(token_str)),
+            None => Err(SaTokenError::NotLogin),
+        }
+    }
+
+    /// 列出在线 token（B1 list 原语）
+    /// List online tokens (B1 list primitive)
+    pub async fn get_all_tokens_by_login_id(
+        &self,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<Vec<TokenValue>> {
+        let tokens = self.token_repo().list_tokens(login_type, login_id).await?;
+        Ok(tokens.into_iter().map(TokenValue::new).collect())
+    }
+
+    /// 更新 extra_data 并经 TokenRepo 落盘
+    /// Update extra_data and persist via TokenRepo
+    pub async fn update_extra_data(
         &self,
         token: &TokenValue,
-        mode: LogoutMode,
-        keep_token_session: bool,
+        extra_data: serde_json::Value,
     ) -> SaTokenResult<()> {
-        tracing::debug!("Manager: logout_internal mode={:?}, token={}", mode, token);
-
-        let key = self.config.make_key("token:", token.as_str());
-        let token_info_str = self
-            .storage
-            .get(&key)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-        let token_info = token_info_str
-            .as_ref()
-            .and_then(|value| serde_json::from_str::<TokenInfo>(value).ok());
-
-        let login_id = if let Some(ref info) = token_info {
-            Some(info.login_id.clone())
-        } else if let Ok(Some(mapped)) = self.get_token_id_mapping(token.as_str()).await {
-            if is_kick_out_marker(&mapped) || is_replaced_marker(&mapped) {
-                None
-            } else {
-                Some(mapped)
-            }
-        } else {
-            None
-        };
-
-        if mode == LogoutMode::Logout {
-            self.storage
-                .delete(&key)
-                .await
-                .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-            self.delete_token_id_mapping(token.as_str()).await?;
-        } else if mode == LogoutMode::KickOut {
-            self.update_token_id_mapping(token.as_str(), TOKEN_MAP_KICK_OUT)
-                .await?;
-        } else {
-            self.update_token_id_mapping(token.as_str(), TOKEN_MAP_BE_REPLACED)
-                .await?;
-        }
-
-        if !keep_token_session {
-            let _ = self.delete_token_session(token).await;
-        }
-
-        if let Some(info) = token_info {
-            let account_ns = self.account_ns(&info.login_type, &info.login_id);
-
-            if let Ok(mut session) = self.get_session(&account_ns).await {
-                if session.remove_terminal(token.as_str()).is_some() {
-                    if session.terminal_count() == 0 && mode != LogoutMode::Replaced {
-                        let _ = self.delete_session(&account_ns).await;
-                    } else {
-                        let _ = self.save_session(&session).await;
-                    }
-                }
-            }
-
-            let login_token_key =
-                self.login_token_mapping_key(&info.login_id, &info.login_type);
-            if mode == LogoutMode::Logout {
-                if let Ok(Some(mapped)) = self.storage.get(&login_token_key).await
-                    && mapped == token.as_str() {
-                        let _ = self.storage.delete(&login_token_key).await;
-                    }
-                let _ = self.remove_token_index(&account_ns, token.as_str()).await;
-            }
-
-            if let Some(online_mgr) = &self.online_manager {
-                online_mgr.mark_offline(&info.login_id, token.as_str()).await;
-            }
-
-            let event = match mode {
-                LogoutMode::Logout => {
-                    SaTokenEvent::logout(&info.login_id, token.as_str())
-                        .with_login_type(&info.login_type)
-                }
-                LogoutMode::KickOut => {
-                    SaTokenEvent::kick_out(&info.login_id, token.as_str())
-                        .with_login_type(&info.login_type)
-                }
-                LogoutMode::Replaced => {
-                    SaTokenEvent::replaced(&info.login_id, token.as_str())
-                        .with_login_type(&info.login_type)
-                }
-            };
-            self.event_bus.publish(event).await;
-        } else if let Some(id) = login_id {
-            let event = match mode {
-                LogoutMode::Logout => SaTokenEvent::logout(&id, token.as_str()),
-                LogoutMode::KickOut => SaTokenEvent::kick_out(&id, token.as_str()),
-                LogoutMode::Replaced => SaTokenEvent::replaced(&id, token.as_str()),
-            };
-            self.event_bus.publish(event).await;
-        }
-
-        Ok(())
+        let mut token_info = self.get_token_info(token).await?;
+        token_info.extra_data = Some(extra_data);
+        self.token_repo().save_token_info(&token_info).await
     }
-    
-    /// 根据登录 ID 登出所有 token
-    pub async fn logout_by_login_id(&self, login_id: &str) -> SaTokenResult<()> {
-        // 优先使用多设备索引精确登出，避免依赖 keys 全表扫描
-        let idx_key = self.config.make_key("login:tokens:", login_id);
-        let tokens = self.load_string_list(&idx_key).await.unwrap_or_default();
-        if !tokens.is_empty() {
-            for t in tokens {
-                let _ = self.logout(&TokenValue::new(t)).await;
-            }
-            return Ok(());
-        }
 
-        // 回退：全量扫描 token 键（依赖 storage.keys，Redis 需实现 keys）
-        let token_prefix = format!("{}token:", self.config.key_prefix());
-        
-        if let Ok(keys) = self.storage.keys(&format!("{}*", token_prefix)).await {
-            for key in keys {
-                if let Ok(Some(token_info_str)) = self.storage.get(&key).await {
-                    if let Ok(token_info) = serde_json::from_str::<TokenInfo>(&token_info_str) {
-                        let ti_ns = self.account_ns(&token_info.login_type, &token_info.login_id);
-                        if ti_ns == login_id {
-                            let token_str = key[token_prefix.len()..].to_string();
-                            let _ = self.logout(&TokenValue::new(token_str)).await;
-                        }
-                    }
-                }
-            }
-        }
-        
-        Ok(())
+    /// 创建绑定 login_type 的廉价 Clone 门面
+    /// Create a cheap Clone facade bound to login_type
+    pub fn stp_logic(&self, login_type: &str) -> crate::stp_logic::SaLogic {
+        crate::stp_logic::SaLogic::new(login_type, self.clone())
     }
-    
-    /// 获取 token 信息
-    pub async fn get_token_info(&self, token: &TokenValue) -> SaTokenResult<TokenInfo> {
-        if let Some(mapped) = self.get_token_id_mapping(token.as_str()).await? {
-            if is_kick_out_marker(&mapped) {
-                return Err(SaTokenError::AccountKickedOut);
-            }
-            if is_replaced_marker(&mapped) {
-                return Err(SaTokenError::AccountReplaced);
-            }
-        }
 
-        let key = self.config.make_key("token:", token.as_str());
-        let value = self.storage.get(&key).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-            .ok_or(SaTokenError::TokenNotFound)?;
-        
-        let token_info: TokenInfo = serde_json::from_str(&value)
-            .map_err(SaTokenError::SerializationError)?;
-        
-        // 检查是否过期
-        if token_info.is_expired() {
-            self.logout(token).await?;
-            return Err(SaTokenError::TokenExpired);
-        }
-
-        // 活跃超时冻结：超过 active_timeout 未活跃则拒绝（对齐 Java checkActiveTimeout）
-        if token_info.is_freeze(self.config.active_timeout) {
-            return Err(SaTokenError::TokenInactive);
-        }
-        
-        // 自动续签：刷新 last_active_time 并延长 token TTL（对齐 Java updateLastActiveToNow + autoRenew）
-        if self.config.auto_renew {
-            let renew_timeout = if self.config.active_timeout > 0 {
-                self.config.active_timeout
-            } else {
-                self.config.timeout
-            };
-
-            let mut renewed = token_info.clone();
-            renewed.update_active_time();
-            if renew_timeout > 0 {
-                renewed.expire_time =
-                    Some(Utc::now() + Duration::seconds(renew_timeout));
-            }
-
-            let key = self.config.make_key("token:", token.as_str());
-            if let Ok(value) = serde_json::to_string(&renewed) {
-                let storage_ttl = if renew_timeout > 0 {
-                    Some(std::time::Duration::from_secs(renew_timeout as u64))
-                } else {
-                    self.config.timeout_duration()
-                };
-                let _ = self.storage.set(&key, &value, storage_ttl).await;
-            }
-            return Ok(renewed);
-        }
-        
-        Ok(token_info)
-    }
-    
-    /// 检查 token 是否有效
+    /// token 是否有效 | Whether the token is valid
     pub async fn is_valid(&self, token: &TokenValue) -> bool {
-        self.get_token_info(token).await.is_ok()
+        self.auth_service.is_valid(token).await
     }
-    
-    /// 获取 session
-    pub async fn get_session(&self, login_id: &str) -> SaTokenResult<SaSession> {
-        let key = self.config.make_key("session:", login_id);
-        let value = self.storage.get(&key).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-        
-        if let Some(value) = value {
-            let session: SaSession = serde_json::from_str(&value)
-                .map_err(SaTokenError::SerializationError)?;
-            Ok(session)
-        } else {
-            Ok(SaSession::new(login_id))
-        }
-    }
-    
-    /// 保存 session
-    pub async fn save_session(&self, session: &SaSession) -> SaTokenResult<()> {
-        let key = self.config.make_key("session:", &session.id);
-        let value = serde_json::to_string(session)
-            .map_err(SaTokenError::SerializationError)?;
-        
-        self.storage.set(&key, &value, None).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-        
-        Ok(())
-    }
-    
-    /// 删除 session
-    pub async fn delete_session(&self, login_id: &str) -> SaTokenResult<()> {
-        let key = self.config.make_key("session:", login_id);
-        self.storage.delete(&key).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-        Ok(())
-    }
-    
-    /// 续期 token（重置过期时间）
+
+    /// 续期 token 到指定秒数 | Renew a token to an explicit lifetime
     pub async fn renew_timeout(
         &self,
         token: &TokenValue,
         timeout_seconds: i64,
     ) -> SaTokenResult<()> {
-        let token_info = self.get_token_info(token).await?;
-        self.renew_timeout_internal(token, timeout_seconds, &token_info).await
+        self.auth_service
+            .renew_timeout(token, timeout_seconds)
+            .await
     }
-    
-    /// 内部续期方法（避免递归调用 get_token_info）
-    async fn renew_timeout_internal(
+
+    // ---------- Session 与终端 ----------
+
+    /// 读取账号 Session（默认 login_type）
+    pub async fn get_session(&self, login_id: &str) -> SaTokenResult<SaSession> {
+        self.session_repo
+            .get_account_session(LOGIN_TYPE_DEFAULT, login_id)
+            .await
+    }
+
+    /// 读取账号 Session（指定 login_type，A3 契约）
+    pub async fn get_session_with_type(
         &self,
-        token: &TokenValue,
-        timeout_seconds: i64,
-        token_info: &TokenInfo,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<SaSession> {
+        self.session_repo
+            .get_account_session(login_type, login_id)
+            .await
+    }
+
+    /// 保存账号 Session（修 B1-9：以 session.id 自身作为命名空间回写）
+    pub async fn save_session(&self, session: &SaSession) -> SaTokenResult<()> {
+        self.session_repo.save_session_object(session).await
+    }
+
+    /// 保存账号 Session（指定 login_type）
+    pub async fn save_session_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        session: &SaSession,
     ) -> SaTokenResult<()> {
-        let mut new_token_info = token_info.clone();
-        
-        // 设置新的过期时间
-        use chrono::{Utc, Duration};
-        let new_expire_time = Utc::now() + Duration::seconds(timeout_seconds);
-        new_token_info.expire_time = Some(new_expire_time);
-        
-        // 保存更新后的 token 信息
-        let key = self.config.make_key("token:", token.as_str());
-        let value = serde_json::to_string(&new_token_info)
-            .map_err(SaTokenError::SerializationError)?;
-        
-        let timeout = std::time::Duration::from_secs(timeout_seconds as u64);
-        self.storage.set(&key, &value, Some(timeout)).await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-        
-        Ok(())
-    }
-    
-    /// 踢人下线（按 login_id，对该账号所有 token 执行 KICKOUT）
-    pub async fn kick_out(&self, login_id: &str) -> SaTokenResult<()> {
-        if let Some(online_mgr) = &self.online_manager {
-            let _ = online_mgr
-                .kick_out_notify(login_id, "Account kicked out".to_string())
-                .await;
-        }
-
-        let idx_key = self.config.make_key("login:tokens:", login_id);
-        let tokens = self.load_string_list(&idx_key).await.unwrap_or_default();
-        if !tokens.is_empty() {
-            for t in tokens {
-                self.kick_out_by_token(&TokenValue::new(t)).await?;
-            }
-        } else if let Ok(Some(token_str)) = self
-            .storage
-            .get(&self.config.make_key("login:token:", login_id))
+        self.session_repo
+            .save_account_session(login_type, login_id, session)
             .await
-        {
-            self.kick_out_by_token(&TokenValue::new(token_str)).await?;
-        }
-
-        self.delete_session(login_id).await?;
-        Ok(())
     }
 
-    fn token_id_mapping_key(&self, token: &str) -> String {
-        self.config.make_key("token-id:", token)
-    }
-
-    async fn save_token_id_mapping(&self, token: &str, login_id: &str) -> SaTokenResult<()> {
-        self.storage
-            .set(
-                &self.token_id_mapping_key(token),
-                login_id,
-                self.config.timeout_duration(),
-            )
+    /// 删除账号 Session（默认 login_type）
+    pub async fn delete_session(&self, login_id: &str) -> SaTokenResult<()> {
+        self.session_repo
+            .delete_account_session(LOGIN_TYPE_DEFAULT, login_id)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
     }
 
-    async fn update_token_id_mapping(&self, token: &str, value: &str) -> SaTokenResult<()> {
-        self.storage
-            .set(&self.token_id_mapping_key(token), value, None)
+    /// 删除账号 Session（指定 login_type）
+    pub async fn delete_session_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<()> {
+        self.session_repo
+            .delete_account_session(login_type, login_id)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
     }
 
-    async fn delete_token_id_mapping(&self, token: &str) -> SaTokenResult<()> {
-        self.storage
-            .delete(&self.token_id_mapping_key(token))
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
-    }
-
-    async fn get_token_id_mapping(&self, token: &str) -> SaTokenResult<Option<String>> {
-        self.storage
-            .get(&self.token_id_mapping_key(token))
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
-    }
-
-    async fn enforce_max_login_count(&self, login_id: &str) -> SaTokenResult<()> {
-        if self.config.max_login_count <= 0 || !self.config.is_concurrent {
-            return Ok(());
-        }
-        let idx_key = self.config.make_key("login:tokens:", login_id);
-        loop {
-            let list = self.load_string_list(&idx_key).await?;
-            if list.len() as i64 <= self.config.max_login_count {
-                break;
-            }
-            let Some(oldest) = list.first().cloned() else {
-                break;
-            };
-            let mut trimmed = list;
-            trimmed.remove(0);
-            self.save_string_list(&idx_key, &trimmed).await?;
-            let token = TokenValue::new(oldest);
-            match self.config.overflow_logout_mode {
-                LogoutMode::Logout => self.logout(&token).await?,
-                LogoutMode::KickOut => self.kick_out_by_token(&token).await?,
-                LogoutMode::Replaced => self.replaced_by_token(&token).await?,
-            }
-        }
-        Ok(())
-    }
-
-    /// 账号命名空间：将 (login_type, login_id) 转为存储键的 id 段。
-    ///
-    /// - default/""/"login" → 返回 login_id 本身（兼容历史键）
-    /// - 其它 → 返回 "{login_type}:{login_id}"（多账号隔离）
-    pub(crate) fn account_ns(&self, login_type: &str, login_id: &str) -> String {
-        if login_type.is_empty() || login_type == "default" || login_type == "login" {
-            login_id.to_string()
-        } else {
-            format!("{}:{}", login_type, login_id)
-        }
-    }
-
-    /// 构造 login_id -> token 映射键（区分 default 与带 login_type 的键）
-    fn login_token_mapping_key(&self, login_id: &str, login_type: &str) -> String {
-        let ns = self.account_ns(login_type, login_id);
-        self.config.make_key("login:token:", &ns)
-    }
-
-    /// 获取指定账号已登录设备终端列表
+    /// 获取指定账号的终端列表 | Terminal list of an account
     pub async fn get_terminal_list(
         &self,
         login_type: &str,
@@ -729,8 +579,7 @@ impl SaTokenManager {
         device_type: Option<&str>,
     ) -> SaTokenResult<Vec<crate::session::SaTerminalInfo>> {
         let ns = self.account_ns(login_type, login_id);
-        let session = self.get_session(&ns).await?;
-        Ok(session.get_terminal_list_by_device_type(device_type))
+        self.session_repo.get_terminal_list(&ns, device_type).await
     }
 
     /// 获取指定账号的 token 列表（来自终端列表）
@@ -741,246 +590,214 @@ impl SaTokenManager {
         device_type: Option<&str>,
     ) -> SaTokenResult<Vec<String>> {
         let ns = self.account_ns(login_type, login_id);
-        let session = self.get_session(&ns).await?;
-        Ok(session.get_token_value_list_by_device_type(device_type))
+        self.session_repo.get_token_list(&ns, device_type).await
     }
 
-    /// 按 token 反查终端信息
+    /// 按 token 反查终端信息 | Look up terminal info by token
     pub async fn get_terminal_info_by_token(
         &self,
         token: &TokenValue,
     ) -> SaTokenResult<Option<crate::session::SaTerminalInfo>> {
-        let info = match self.get_token_info(token).await {
-            Ok(i) => i,
-            Err(_) => return Ok(None),
+        let Ok(info) = self.get_token_info(token).await else {
+            return Ok(None);
         };
         let ns = self.account_ns(&info.login_type, &info.login_id);
-        let session = self.get_session(&ns).await?;
-        Ok(session.get_terminal(token.as_str()).cloned())
+        self.session_repo.get_terminal(&ns, token.as_str()).await
     }
 
-    /// 追加 token 到多设备列表 login:tokens:{login_id}（去重）
-    async fn append_token_index(&self, login_id: &str, token: &str) -> SaTokenResult<()> {
-        let key = self.config.make_key("login:tokens:", login_id);
-        let mut list = self.load_string_list(&key).await?;
-        if !list.iter().any(|t| t == token) {
-            list.push(token.to_string());
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
-    }
+    // ---------- 权限 / 角色（全部委托 AuthzService）----------
 
-    /// 从多设备列表移除某个 token（logout 时调用）
-    async fn remove_token_index(&self, login_id: &str, token: &str) -> SaTokenResult<()> {
-        let key = self.config.make_key("login:tokens:", login_id);
-        let mut list = self.load_string_list(&key).await?;
-        let before = list.len();
-        list.retain(|t| t != token);
-        if list.len() != before {
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
-    }
-}
-
-// ==================== 权限 / 角色持久化（基于 SaStorage） ====================
-
-impl SaTokenManager {
-    /// 构造权限存储键：{prefix}permission:{login_id}
-    fn permission_key(&self, login_id: &str) -> String {
-        self.config.make_key("permission:", login_id)
-    }
-
-    /// 构造角色存储键：{prefix}role:{login_id}
-    fn role_key(&self, login_id: &str) -> String {
-        self.config.make_key("role:", login_id)
-    }
-
-    fn permission_key_ns(&self, login_type: &str, login_id: &str) -> String {
-        let ns = self.account_ns(login_type, login_id);
-        self.config.make_key("permission:", &ns)
-    }
-
-    fn role_key_ns(&self, login_type: &str, login_id: &str) -> String {
-        let ns = self.account_ns(login_type, login_id);
-        self.config.make_key("role:", &ns)
-    }
-
+    /// 获取权限列表（指定账号体系）| Permission list for a login type
     pub async fn get_permissions_with_type(
         &self,
         login_type: &str,
         login_id: &str,
     ) -> SaTokenResult<Vec<String>> {
-        if let Some(iface) = &self.stp_interface {
-            return iface.get_permission_list(login_id, login_type).await;
-        }
-        self.load_string_list(&self.permission_key_ns(login_type, login_id))
+        self.authz_service
+            .get_permissions(login_type, login_id)
             .await
     }
 
+    /// 覆盖权限列表（指定账号体系）| Overwrite the permission list for a login type
     pub async fn set_permissions_with_type(
         &self,
         login_type: &str,
         login_id: &str,
         permissions: Vec<String>,
     ) -> SaTokenResult<()> {
-        self.save_string_list(
-            &self.permission_key_ns(login_type, login_id),
-            &permissions,
-        )
-        .await
+        self.authz_service
+            .set_permissions(login_type, login_id, &permissions)
+            .await
     }
 
+    /// 追加单个权限（指定账号体系，B2-35 新增）
+    /// Append one permission for a login type (added in B2-35).
+    pub async fn add_permission_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        permission: String,
+    ) -> SaTokenResult<()> {
+        self.authz_service
+            .add_permission(login_type, login_id, permission)
+            .await
+    }
+
+    /// 移除单个权限（指定账号体系，B2-35 新增）
+    /// Remove one permission for a login type (added in B2-35).
+    pub async fn remove_permission_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        permission: &str,
+    ) -> SaTokenResult<()> {
+        self.authz_service
+            .remove_permission(login_type, login_id, permission)
+            .await
+    }
+
+    /// 清空权限（指定账号体系，B2-35 新增）
+    /// Clear permissions for a login type (added in B2-35).
+    pub async fn clear_permissions_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<()> {
+        self.authz_service
+            .clear_permissions(login_type, login_id)
+            .await
+    }
+
+    /// 获取角色列表（指定账号体系）| Role list for a login type
     pub async fn get_roles_with_type(
         &self,
         login_type: &str,
         login_id: &str,
     ) -> SaTokenResult<Vec<String>> {
-        if let Some(iface) = &self.stp_interface {
-            return iface.get_role_list(login_id, login_type).await;
-        }
-        self.load_string_list(&self.role_key_ns(login_type, login_id))
-            .await
+        self.authz_service.get_roles(login_type, login_id).await
     }
 
+    /// 覆盖角色列表（指定账号体系）| Overwrite the role list for a login type
     pub async fn set_roles_with_type(
         &self,
         login_type: &str,
         login_id: &str,
         roles: Vec<String>,
     ) -> SaTokenResult<()> {
-        self.save_string_list(&self.role_key_ns(login_type, login_id), &roles)
+        self.authz_service
+            .set_roles(login_type, login_id, &roles)
             .await
     }
 
-    /// 将字符串列表序列化为 JSON 并写入存储
-    /// 权限/角色无过期需求，TTL 固定使用 None（永久保存）
-    async fn save_string_list(&self, key: &str, list: &[String]) -> SaTokenResult<()> {
-        let value = serde_json::to_string(list).map_err(SaTokenError::SerializationError)?;
-        self.storage
-            .set(key, &value, None)
+    /// 追加单个角色（指定账号体系，B2-35 新增）
+    /// Append one role for a login type (added in B2-35).
+    pub async fn add_role_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        role: String,
+    ) -> SaTokenResult<()> {
+        self.authz_service
+            .add_role(login_type, login_id, role)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
     }
 
-    /// 从存储读取字符串列表
-    /// 键不存在时返回空 Vec（视为该用户无任何权限/角色）
-    async fn load_string_list(&self, key: &str) -> SaTokenResult<Vec<String>> {
-        match self
-            .storage
-            .get(key)
+    /// 移除单个角色（指定账号体系，B2-35 新增）
+    /// Remove one role for a login type (added in B2-35).
+    pub async fn remove_role_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        role: &str,
+    ) -> SaTokenResult<()> {
+        self.authz_service
+            .remove_role(login_type, login_id, role)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-        {
-            Some(value) => serde_json::from_str(&value).map_err(SaTokenError::SerializationError),
-            None => Ok(Vec::new()),
-        }
     }
 
-    /// 覆盖设置用户权限列表
-    /// 会完全替换该用户的所有权限
-    pub async fn set_permissions(&self, login_id: &str, permissions: Vec<String>) -> SaTokenResult<()> {
-        self.save_string_list(&self.permission_key(login_id), &permissions).await
+    /// 清空角色（指定账号体系，B2-35 新增）
+    /// Clear roles for a login type (added in B2-35).
+    pub async fn clear_roles_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+    ) -> SaTokenResult<()> {
+        self.authz_service.clear_roles(login_type, login_id).await
     }
 
-    /// 获取用户全部权限列表
-    /// 用户不存在或无权限时返回空列表
+    // ---------- 默认账号体系的便捷包装 | Default login type convenience wrappers ----------
+
+    /// 获取权限列表 | Permission list
     pub async fn get_permissions(&self, login_id: &str) -> SaTokenResult<Vec<String>> {
-        if let Some(iface) = &self.stp_interface {
-            return iface.get_permission_list(login_id, "default").await;
-        }
-        self.load_string_list(&self.permission_key(login_id)).await
+        self.get_permissions_with_type(LOGIN_TYPE_DEFAULT, login_id)
+            .await
     }
 
-    /// 追加单个权限（已存在则跳过，避免重复）
-    /// 采用读-改-写模式，分布式高并发下存在竞态风险
+    /// 覆盖权限列表 | Overwrite the permission list
+    pub async fn set_permissions(
+        &self,
+        login_id: &str,
+        permissions: Vec<String>,
+    ) -> SaTokenResult<()> {
+        self.set_permissions_with_type(LOGIN_TYPE_DEFAULT, login_id, permissions)
+            .await
+    }
+
+    /// 追加单个权限 | Append one permission
     pub async fn add_permission(&self, login_id: &str, permission: String) -> SaTokenResult<()> {
-        let key = self.permission_key(login_id);
-        let mut list = self.load_string_list(&key).await?;
-        if !list.contains(&permission) {
-            list.push(permission);
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
+        self.add_permission_with_type(LOGIN_TYPE_DEFAULT, login_id, permission)
+            .await
     }
 
-    /// 移除用户的某个权限
-    /// 不存在时无操作，仅在确实删除了元素时才回写存储
+    /// 移除单个权限 | Remove one permission
     pub async fn remove_permission(&self, login_id: &str, permission: &str) -> SaTokenResult<()> {
-        let key = self.permission_key(login_id);
-        let mut list = self.load_string_list(&key).await?;
-        let before = list.len();
-        list.retain(|p| p != permission);
-        if list.len() != before {
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
+        self.remove_permission_with_type(LOGIN_TYPE_DEFAULT, login_id, permission)
+            .await
     }
 
-    /// 清除用户的全部权限
-    /// 直接删除对应存储键
+    /// 清空权限 | Clear all permissions
     pub async fn clear_permissions(&self, login_id: &str) -> SaTokenResult<()> {
-        self.storage
-            .delete(&self.permission_key(login_id))
+        self.clear_permissions_with_type(LOGIN_TYPE_DEFAULT, login_id)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
     }
 
-    /// 覆盖设置用户角色列表
-    /// 会完全替换该用户的所有角色
-    pub async fn set_roles(&self, login_id: &str, roles: Vec<String>) -> SaTokenResult<()> {
-        self.save_string_list(&self.role_key(login_id), &roles).await
-    }
-
-    /// 获取用户全部角色列表
-    /// 用户不存在或无角色时返回空列表
+    /// 获取角色列表 | Role list
     pub async fn get_roles(&self, login_id: &str) -> SaTokenResult<Vec<String>> {
-        if let Some(iface) = &self.stp_interface {
-            return iface.get_role_list(login_id, "default").await;
-        }
-        self.load_string_list(&self.role_key(login_id)).await
+        self.get_roles_with_type(LOGIN_TYPE_DEFAULT, login_id).await
     }
 
-    /// 追加单个角色（已存在则跳过，避免重复）
-    /// 采用读-改-写模式，分布式高并发下存在竞态风险
-    pub async fn add_role(&self, login_id: &str, role: String) -> SaTokenResult<()> {
-        let key = self.role_key(login_id);
-        let mut list = self.load_string_list(&key).await?;
-        if !list.contains(&role) {
-            list.push(role);
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
-    }
-
-    /// 移除用户的某个角色
-    /// 不存在时无操作，仅在确实删除了元素时才回写存储
-    pub async fn remove_role(&self, login_id: &str, role: &str) -> SaTokenResult<()> {
-        let key = self.role_key(login_id);
-        let mut list = self.load_string_list(&key).await?;
-        let before = list.len();
-        list.retain(|r| r != role);
-        if list.len() != before {
-            self.save_string_list(&key, &list).await?;
-        }
-        Ok(())
-    }
-
-    /// 清除用户的全部角色
-    /// 直接删除对应存储键
-    pub async fn clear_roles(&self, login_id: &str) -> SaTokenResult<()> {
-        self.storage
-            .delete(&self.role_key(login_id))
+    /// 覆盖角色列表 | Overwrite the role list
+    pub async fn set_roles(&self, login_id: &str, roles: Vec<String>) -> SaTokenResult<()> {
+        self.set_roles_with_type(LOGIN_TYPE_DEFAULT, login_id, roles)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
+    }
+
+    /// 追加单个角色 | Append one role
+    pub async fn add_role(&self, login_id: &str, role: String) -> SaTokenResult<()> {
+        self.add_role_with_type(LOGIN_TYPE_DEFAULT, login_id, role)
+            .await
+    }
+
+    /// 移除单个角色 | Remove one role
+    pub async fn remove_role(&self, login_id: &str, role: &str) -> SaTokenResult<()> {
+        self.remove_role_with_type(LOGIN_TYPE_DEFAULT, login_id, role)
+            .await
+    }
+
+    /// 清空角色 | Clear all roles
+    pub async fn clear_roles(&self, login_id: &str) -> SaTokenResult<()> {
+        self.clear_roles_with_type(LOGIN_TYPE_DEFAULT, login_id)
+            .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sa_token_storage_memory::MemoryStorage;
     use crate::config::{LogoutMode, TokenStyle};
+    use crate::error::SaTokenError;
+    use chrono::{Duration, Utc};
+    use sa_token_storage_memory::MemoryStorage;
 
     fn make_manager(is_concurrent: bool, auto_renew: bool, active_timeout: i64) -> SaTokenManager {
         let config = SaTokenConfig {
@@ -1008,7 +825,7 @@ mod tests {
     async fn test_logout_clears_login_token_mapping() {
         let mgr = make_manager(true, false, -1);
         let token = mgr.login("user_1").await.unwrap();
-        let map_key = mgr.config.make_key("login:token:", "user_1");
+        let map_key = mgr.keys().login_token("default", "user_1");
         assert!(mgr.storage.get(&map_key).await.unwrap().is_some());
         mgr.logout(&token).await.unwrap();
         assert!(mgr.storage.get(&map_key).await.unwrap().is_none());
@@ -1019,11 +836,11 @@ mod tests {
         let mgr = make_manager(true, false, -1);
         let t1 = mgr.login("user_1").await.unwrap();
         let t2 = mgr.login("user_1").await.unwrap();
-        let idx_key = mgr.config.make_key("login:tokens:", "user_1");
-        let list: Vec<String> = serde_json::from_str(
-            &mgr.storage.get(&idx_key).await.unwrap().unwrap(),
-        )
-        .unwrap();
+        let list = mgr
+            .token_repo()
+            .list_tokens("default", "user_1")
+            .await
+            .unwrap();
         assert_eq!(list.len(), 2);
         assert!(list.contains(&t1.as_str().to_string()));
         assert!(list.contains(&t2.as_str().to_string()));
@@ -1033,13 +850,13 @@ mod tests {
     async fn test_active_timeout_freeze_returns_inactive() {
         let mgr = make_manager(true, false, 1);
         let token = mgr.login("user_1").await.unwrap();
-        let key = mgr.config.make_key("token:", token.as_str());
+        let key = mgr.keys().token_info(token.as_str());
         let mut info = mgr.get_token_info(&token).await.unwrap();
         info.last_active_time = Utc::now() - Duration::seconds(10);
         mgr.storage
             .set(
                 &key,
-                &serde_json::to_string(&info).unwrap(),
+                &mgr.config.encode(&info).unwrap(),
                 mgr.config.timeout_duration(),
             )
             .await
@@ -1067,7 +884,7 @@ mod tests {
             ..Default::default()
         };
         let mgr = SaTokenManager::new(Arc::new(MemoryStorage::new()), config);
-        let nonce_mgr = crate::nonce::NonceManager::new(mgr.storage.clone(), 60);
+        let nonce_mgr = crate::nonce::NonceManager::from_dao(mgr.dao().clone(), 60);
         let nonce = nonce_mgr.generate();
         let token = mgr
             .login_with_options("user_1", None, None, None, Some(nonce.clone()), None)
@@ -1133,10 +950,10 @@ mod tests {
     #[test]
     fn test_account_ns_default_unchanged() {
         let mgr = make_manager(true, false, -1);
-        assert_eq!(mgr.account_ns("default", "u1"), "u1");
-        assert_eq!(mgr.account_ns("login", "u1"), "u1");
-        assert_eq!(mgr.account_ns("", "u1"), "u1");
-        assert_eq!(mgr.account_ns("admin", "u1"), "admin:u1");
+        assert_eq!(mgr.account_ns("default", "u1").as_str(), "u1");
+        assert_eq!(mgr.account_ns("login", "u1").as_str(), "u1");
+        assert_eq!(mgr.account_ns("", "u1").as_str(), "u1");
+        assert_eq!(mgr.account_ns("admin", "u1").as_str(), "admin:u1");
     }
 
     #[tokio::test]

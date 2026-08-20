@@ -25,7 +25,7 @@ async fn test_default_config_values() {
     assert!(config.is_read_cookie);
     assert!(config.is_read_header);
     assert!(config.is_read_body);
-    assert!(config.token_prefix.is_none());
+    assert_eq!(config.storage_key_prefix, "sa:");
     assert!(config.jwt_secret_key.is_none());
     assert_eq!(config.jwt_algorithm.as_deref(), Some("HS256"));
     assert!(config.jwt_issuer.is_none());
@@ -46,7 +46,7 @@ async fn test_builder_all_fields() {
         .is_concurrent(false)
         .is_share(false)
         .token_style(TokenStyle::Jwt)
-        .token_prefix("Bearer ")
+        .storage_key_prefix("my:")
         .jwt_secret_key("my-secret")
         .jwt_algorithm("HS512")
         .jwt_issuer("test-app")
@@ -63,7 +63,7 @@ async fn test_builder_all_fields() {
     assert!(!config.is_concurrent);
     assert!(!config.is_share);
     assert!(matches!(config.token_style, TokenStyle::Jwt));
-    assert_eq!(config.token_prefix.as_deref(), Some("Bearer "));
+    assert_eq!(config.storage_key_prefix, "my:");
     assert_eq!(config.jwt_secret_key.as_deref(), Some("my-secret"));
     assert_eq!(config.jwt_algorithm.as_deref(), Some("HS512"));
     assert_eq!(config.jwt_issuer.as_deref(), Some("test-app"));
@@ -84,18 +84,14 @@ async fn test_builder_token_name() {
 
 #[tokio::test]
 async fn test_timeout_negative_never_expires() {
-    let config = SaTokenConfig::builder()
-        .timeout(-1)
-        .build_config();
+    let config = SaTokenConfig::builder().timeout(-1).build_config();
     assert_eq!(config.timeout, -1);
     assert!(config.timeout_duration().is_none());
 }
 
 #[tokio::test]
 async fn test_timeout_positive_has_duration() {
-    let config = SaTokenConfig::builder()
-        .timeout(3600)
-        .build_config();
+    let config = SaTokenConfig::builder().timeout(3600).build_config();
     let dur = config.timeout_duration();
     assert!(dur.is_some());
     assert_eq!(dur.unwrap().as_secs(), 3600);
@@ -103,9 +99,7 @@ async fn test_timeout_positive_has_duration() {
 
 #[tokio::test]
 async fn test_is_concurrent_setting() {
-    let config = SaTokenConfig::builder()
-        .is_concurrent(false)
-        .build_config();
+    let config = SaTokenConfig::builder().is_concurrent(false).build_config();
     assert!(!config.is_concurrent);
 }
 
@@ -123,9 +117,7 @@ async fn test_all_token_styles() {
         TokenStyle::Tik,
     ];
     for style in &styles {
-        let config = SaTokenConfig::builder()
-            .token_style(*style)
-            .build_config();
+        let config = SaTokenConfig::builder().token_style(*style).build_config();
         // TokenStyle doesn't implement PartialEq for direct comparison,
         // but we can verify via debug output
         let _ = format!("{:?}", config.token_style);
@@ -150,9 +142,7 @@ async fn test_builder_register_listener() {
 #[tokio::test]
 #[should_panic(expected = "Storage must be set")]
 async fn test_build_without_storage_panics() {
-    SaTokenConfig::builder()
-        .timeout(3600)
-        .build();
+    SaTokenConfig::builder().timeout(3600).build();
 }
 
 #[tokio::test]

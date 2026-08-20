@@ -1,7 +1,9 @@
 [package]
 name = "tonic-full-example"
-version = "0.1.18"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
 
 [dependencies]
 sa-token-plugin-tonic = { path = "../../sa-token-plugin-tonic" }
@@ -18,3 +20,6 @@ anyhow = "1.0"
 
 [build-dependencies]
 tonic-build = { version = "0.12", features = ["prost"] }
+
+[lints]
+workspace = true

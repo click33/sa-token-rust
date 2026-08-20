@@ -6,7 +6,7 @@
 mod common;
 
 use common::setup;
-use sa_token_core::{SaTokenConfig, SaTokenError, StpUtil, token::TokenValue};
+use sa_token_core::StpUtil;
 
 fn init_stp() {
     let _ = setup::shared_manager();
@@ -113,7 +113,9 @@ async fn test_delete_session() {
     // Delete session
     StpUtil::delete_session("user_s8").await.expect("delete");
     // After deletion, a new session is created when accessed again
-    let new_session = StpUtil::get_session("user_s8").await.expect("get after delete");
+    let new_session = StpUtil::get_session("user_s8")
+        .await
+        .expect("get after delete");
     assert!(new_session.id == "user_s8"); // session id is the login_id
 }
 
@@ -122,8 +124,12 @@ async fn test_stp_util_set_get_session_value() {
     init_stp();
     StpUtil::login("user_s9").await.expect("login");
     // Use StpUtil convenience methods
-    StpUtil::set_session_value("user_s9", "theme", "dark").await.expect("set");
-    let theme: Option<String> = StpUtil::get_session_value("user_s9", "theme").await.expect("get");
+    StpUtil::set_session_value("user_s9", "theme", "dark")
+        .await
+        .expect("set");
+    let theme: Option<String> = StpUtil::get_session_value("user_s9", "theme")
+        .await
+        .expect("get");
     assert_eq!(theme.as_deref(), Some("dark"));
 }
 
@@ -156,7 +162,9 @@ async fn test_get_nonexistent_key_returns_none() {
 async fn test_get_session_without_login_creates_new() {
     init_stp();
     // get_session for a user that never logged in returns a new empty session
-    let session = StpUtil::get_session("not_logged_in_user").await.expect("get_session");
+    let session = StpUtil::get_session("not_logged_in_user")
+        .await
+        .expect("get_session");
     assert_eq!(session.id, "not_logged_in_user");
     // The session exists but is empty
     let val: Option<String> = session.get("any_key");
@@ -167,7 +175,9 @@ async fn test_get_session_without_login_creates_new() {
 async fn test_delete_session_twice_no_error() {
     init_stp();
     StpUtil::login("user_s12").await.expect("login");
-    StpUtil::delete_session("user_s12").await.expect("first delete");
+    StpUtil::delete_session("user_s12")
+        .await
+        .expect("first delete");
     // Second delete should not error
     let result = StpUtil::delete_session("user_s12").await;
     assert!(result.is_ok(), "double delete should not error");

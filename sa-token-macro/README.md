@@ -4,7 +4,7 @@ Procedural macros for sa-token-rust.
 
 ## Features
 
-- 🎯 **Annotation Style**: Java-like annotation syntax
+- 🎯 **Annotation Style**: Attribute-macro syntax
 - ✅ **Compile-time Checking**: Catch errors before runtime
 - 🔧 **Easy to Use**: Decorator-style authentication
 - 📝 **Comprehensive**: All authentication scenarios covered
@@ -13,8 +13,8 @@ Procedural macros for sa-token-rust.
 
 ```toml
 [dependencies]
-sa-token-macro = "0.1.13"
-sa-token-core = "0.1.13"
+sa-token-macro = "0.2.0"
+sa-token-core = "0.2.0"
 ```
 
 ## Macros
@@ -74,20 +74,24 @@ async fn view_users() -> &'static str {
 }
 ```
 
-### Ignore Authentication
+### `#[sa_ignore]`
+
+Skips StpUtil checks inserted by other `#[sa_check_*]` macros on this item.
+**Does not** skip framework middleware. For public HTTP routes:
 
 ```rust
-use sa_token_macro::sa_ignore;
-
-#[sa_ignore]
-async fn public_route() -> &'static str {
-    "Public access"
-}
+use sa_token_core::router::PathAuthConfig;
+let cfg = PathAuthConfig::new()
+    .include(vec!["/**".into()])
+    .exclude(vec!["/health".into()]);
 ```
+
+See [doc/guide/permission-matching.md](../doc/guide/permission-matching.md) and
+[doc/guide/path-auth.md](../doc/guide/path-auth.md).
 
 ## Permission Matching Rules
 
-See [Permission Matching Documentation](../docs/PermissionMatching.md) for detailed rules.
+See [doc/guide/permission-matching.md](../doc/guide/permission-matching.md) for detailed rules.
 
 ## Author
 

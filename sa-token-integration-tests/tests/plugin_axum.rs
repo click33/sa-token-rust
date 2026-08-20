@@ -11,34 +11,36 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use axum::body::{Body, to_bytes};
 use axum_08 as axum;
-use axum::body::{to_bytes, Body};
 use http::{Request, Response, StatusCode};
-use tower_08 as tower;
 use tower::{Layer, Service, ServiceExt};
+use tower_08 as tower;
 
 use sa_token_core::{SaTokenConfig, StpUtil, config::TokenStyle};
 use sa_token_plugin_axum::{
-    SaTokenLayer, SaCheckLoginLayer, SaCheckPermissionLayer,
-    SaTokenState as AxumState,
+    SaCheckLoginLayer, SaCheckPermissionLayer, SaLoginId, SaTokenLayer, SaTokenState as AxumState,
 };
 use sa_token_storage_memory::MemoryStorage;
 
 // OnceLock ensures StpUtil is initialized only once per test binary.
-static MANAGER: std::sync::OnceLock<Arc<sa_token_core::SaTokenManager>> = std::sync::OnceLock::new();
+static MANAGER: std::sync::OnceLock<Arc<sa_token_core::SaTokenManager>> =
+    std::sync::OnceLock::new();
 
 fn init_manager() -> Arc<sa_token_core::SaTokenManager> {
-    MANAGER.get_or_init(|| {
-        let storage = Arc::new(MemoryStorage::new());
-        let config = SaTokenConfig::builder()
-            .token_name("sa-token")
-            .timeout(3600)
-            .token_style(TokenStyle::Uuid)
-            .build_config();
-        let manager = sa_token_core::SaTokenManager::new(storage, config);
-        StpUtil::init_manager(manager.clone());
-        Arc::new(manager)
-    }).clone()
+    MANAGER
+        .get_or_init(|| {
+            let storage = Arc::new(MemoryStorage::new());
+            let config = SaTokenConfig::builder()
+                .token_name("sa-token")
+                .timeout(3600)
+                .token_style(TokenStyle::Uuid)
+                .build_config();
+            let manager = sa_token_core::SaTokenManager::new(storage, config);
+            let _ = StpUtil::try_init_manager(manager.clone());
+            Arc::new(manager)
+        })
+        .clone()
 }
 
 fn test_state() -> AxumState {
@@ -54,10 +56,7 @@ fn request_with_token(uri: &str, token: &str) -> Request<Body> {
 }
 
 fn request_without_token(uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .body(Body::empty())
-        .unwrap()
+    Request::builder().uri(uri).body(Body::empty()).unwrap()
 }
 
 // A service that returns the login_id from extensions.
@@ -75,7 +74,10 @@ impl Service<Request<Body>> for EchoLoginIdSvc {
 
     fn call(&mut self, req: Request<Body>) -> Self::Future {
         Box::pin(async move {
-            let login_id = req.extensions().get::<String>().cloned()
+            let login_id = req
+                .extensions()
+                .get::<SaLoginId>()
+                .map(|id| id.0.clone())
                 .unwrap_or_else(|| "no_login".to_string());
             Ok(Response::new(Body::from(login_id)))
         })
@@ -146,7 +148,9 @@ async fn test_check_permission_layer_passes_with_correct_perm() {
     let state = test_state();
     let token = state.manager.login("axum_perm").await.expect("login");
     // Set permissions for this user
-    StpUtil::set_permissions("axum_perm", vec!["admin:panel".to_string()]).await.unwrap();
+    StpUtil::set_permissions("axum_perm", vec!["admin:panel".to_string()])
+        .await
+        .unwrap();
 
     let inner = SaCheckPermissionLayer::new("admin:panel").layer(EchoLoginIdSvc);
     let mut svc = SaTokenLayer::new(state).layer(inner);
@@ -186,7 +190,10 @@ async fn test_check_login_layer_returns_401_without_login_id() {
     let inner = SaCheckLoginLayer::new().layer(EchoLoginIdSvc);
     let mut svc = inner; // No SaTokenLayer → no login_id injected
 
-    let req = Request::builder().uri("/protected").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/protected")
+        .body(Body::empty())
+        .unwrap();
     let res = svc.ready().await.unwrap().call(req).await.unwrap();
     assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
 }
@@ -211,7 +218,9 @@ async fn test_check_permission_layer_returns_403_without_permission() {
 async fn test_check_permission_layer_returns_403_with_wrong_permission() {
     let state = test_state();
     let token = state.manager.login("axum_wrongperm").await.expect("login");
-    StpUtil::set_permissions("axum_wrongperm", vec!["user:read".to_string()]).await.unwrap();
+    StpUtil::set_permissions("axum_wrongperm", vec!["user:read".to_string()])
+        .await
+        .unwrap();
 
     let inner = SaCheckPermissionLayer::new("admin:panel").layer(EchoLoginIdSvc);
     let mut svc = SaTokenLayer::new(state).layer(inner);

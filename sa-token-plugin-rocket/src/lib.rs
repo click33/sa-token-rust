@@ -3,6 +3,8 @@
 //!
 //! - **`v05`** (default | 默认): `sa-token-plugin-rocket-v05` — Rocket **0.5.x**.
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(not(feature = "v05"))]
 compile_error!("sa-token-plugin-rocket: enable `v05` (default).");
 

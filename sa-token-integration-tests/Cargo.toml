@@ -2,6 +2,7 @@
 name = "sa-token-integration-tests"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 publish = false
 
@@ -25,3 +26,6 @@ tonic = { version = "0.12" }
 
 [dev-dependencies]
 serial_test = "3"
+
+[lints]
+workspace = true

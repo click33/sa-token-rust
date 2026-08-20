@@ -13,7 +13,7 @@ Poem framework integration for sa-token-rust.
 
 ```toml
 [dependencies]
-sa-token-plugin-poem = { version = "0.1.13", features = ["redis"] }
+sa-token-plugin-poem = { version = "0.2.0", features = ["redis"] }
 poem = "3.1"
 tokio = { version = "1", features = ["full"] }
 ```
@@ -42,15 +42,6 @@ async fn main() -> Result<(), std::io::Error> {
         .await
 }
 ```
-
-## Version History
-
-### 0.1.13
-- ✨ Added path-based authentication support for fine-grained access control
-- 🔧 Optimized middleware implementation, reduced code duplication
-
-### 0.1.11
-- Initial release with basic features
 
 ## Author
 

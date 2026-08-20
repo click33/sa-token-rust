@@ -1,386 +1,84 @@
-# Distributed Session Management
+# Distributed session
 
-## English
+English | [中文](/zh/guide/distributed-session.md)
 
-### Overview
+`DistributedSessionManager` manages **cross-service business sessions** (attributes, service credentials). It is not online presence, and not an alias for account `SaSession`.
 
-The Distributed Session Management module enables session sharing across multiple microservices. It provides service authentication, cross-service session access, and attribute management with automatic timeout handling.
+## Boundary vs Online
 
-This module is designed for microservices architectures where multiple services need to share user authentication state and session data seamlessly.
+| | Distributed Session | OnlineManager |
+|--|---------------------|---------------|
+| Purpose | Shared session data across services | Who is online, push, kick notify |
+| Typical APIs | `create_session` / `set_attribute` | `mark_online` / `push_to_user` |
+| Storage | `DistributedSessionStorage` | `OnlineStore` (local / Dao) |
 
-### Architecture
+You can use both; keep the responsibilities separate.
 
-```text
-┌────────────────────────────────────────────────────────────────────┐
-│                   Microservices Architecture                       │
-│                   微服务架构                                        │
-└────────────────────────────────────────────────────────────────────┘
+## Storage adapters
 
-    ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-    │  Service A   │  │  Service B   │  │  Service C   │
-    │  (User API)  │  │  (Order API) │  │  (Pay API)   │
-    └──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-           │                  │                  │
-           └──────────────────┼──────────────────┘
-                              │
-                    ┌─────────▼──────────┐
-                    │  Distributed       │
-                    │  Session Storage   │
-                    │  (Redis/Database)  │
-                    └────────────────────┘
-
-Each service can:
-  - Create sessions for users
-  - Access sessions created by other services
-  - Share user authentication state
-```
-
-### Key Features
-
-- **Cross-Service Session Sharing** - Share sessions across microservices
-- **Service Authentication** - Verify service credentials with secret keys
-- **Session Attributes** - Store custom key-value pairs for user context
-- **Multi-Session Support** - One user can have multiple sessions (multi-device)
-- **Automatic Cleanup** - TTL-based session expiration
-- **Pluggable Storage** - Use custom storage backends (Redis, Database, Memory)
-- **Permission-Based Access** - Fine-grained control via service permissions
-- **Session Monitoring** - Track all active sessions per user
-
-### Quick Start
+In-memory and `SaStorage` / `SaTokenDao` adapters:
 
 ```rust
 use sa_token_core::{
-    DistributedSessionManager, InMemoryDistributedStorage, ServiceCredential
+    DistributedSessionManager, InMemoryDistributedStorage, SaStorageDistributedStorage,
 };
 use std::sync::Arc;
 use std::time::Duration;
+
+// Dev / single process
+let storage = Arc::new(InMemoryDistributedStorage::new());
+
+// Same SaStorage / Dao as the app
+let storage = Arc::new(SaStorageDistributedStorage::from_dao(manager.dao().clone()));
+// or from_config(storage, &config) / new(storage, key_prefix)
+```
+
+## Manager
+
+```rust
+use sa_token_core::ServiceCredential;
 use chrono::Utc;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create distributed session manager
-    let storage = Arc::new(InMemoryDistributedStorage::new());
-    let manager = DistributedSessionManager::new(
-        storage,
-        "service-main".to_string(),
-        Duration::from_secs(3600), // 1 hour TTL
-    );
-    
-    // Register a service
-    let credential = ServiceCredential {
-        service_id: "api-gateway".to_string(),
-        service_name: "API Gateway".to_string(),
-        secret_key: "secret123".to_string(),
-        created_at: Utc::now(),
-        permissions: vec!["read".to_string(), "write".to_string()],
-    };
-    manager.register_service(credential).await;
-    
-    // Verify service
-    let verified = manager.verify_service("api-gateway", "secret123").await?;
-    println!("Service verified: {}", verified.service_name);
-    
-    // Create session
-    let session = manager.create_session(
-        "user123".to_string(),
-        "token456".to_string(),
-    ).await?;
-    
-    // Set session attribute
-    manager.set_attribute(
-        &session.session_id,
-        "role".to_string(),
-        "admin".to_string(),
-    ).await?;
-    
-    // Get session attribute
-    if let Some(role) = manager.get_attribute(&session.session_id, "role").await? {
-        println!("User role: {}", role);
-    }
-    
-    // Get all sessions for user
-    let sessions = manager.get_sessions_by_login_id("user123").await?;
-    println!("User has {} active sessions", sessions.len());
-    
-    Ok(())
-}
-```
+let dsm = DistributedSessionManager::new(
+    storage,
+    "order-service".into(),
+    Duration::from_secs(3600),
+);
 
-### Service Authentication Flow
-
-```text
-Service A                   Manager                    Service B
-   |                           |                           |
-   |-- register_service ------>|                           |
-   |<----- registered ---------|                           |
-   |                           |                           |
-   |                           |<-- verify_service(id, secret)
-   |                           |--- check credentials ---->|
-   |                           |<----- verified ----------|
-```
-
-### Cross-Service Session Access
-
-```text
-Service A creates session:
-  session_id: "uuid-123"
-  login_id: "user123"
-  attributes: {"role": "admin"}
-
-Service B accesses session:
-  get_session("uuid-123") -> Full session data
-  Can read/modify attributes
-  Updates last_access timestamp
-```
-
-### API Reference
-
-#### DistributedSessionManager
-
-**Methods:**
-- `new(storage, service_id, timeout)` - Create manager
-- `register_service(credential)` - Register a service
-- `verify_service(id, secret)` - Verify service credentials
-- `create_session(login_id, token)` - Create new session
-- `get_session(session_id)` - Get session by ID
-- `update_session(session)` - Update existing session
-- `delete_session(session_id)` - Delete session
-- `set_attribute(id, key, value)` - Set session attribute
-- `get_attribute(id, key)` - Get session attribute
-- `remove_attribute(id, key)` - Remove session attribute
-- `get_sessions_by_login_id(login_id)` - Get all user sessions
-- `delete_all_sessions(login_id)` - Delete all user sessions
-
----
-
-## Use Cases
-
-### 1. Single Sign-On (SSO) Across Services
-Users log in once and access multiple services without re-authentication:
-
-```text
-User → Service A: Login
-  ├─ Create session: session_id = "abc123"
-  └─ Save to distributed storage
-
-User → Service B: Request with session_id = "abc123"
-  ├─ Service B retrieves session from storage
-  ├─ Validates user is authenticated
-  └─ Processes request ✅ (No re-login needed!)
-```
-
-### 2. Session Sharing for User Context
-Services share user context and state:
-
-```text
-Service A stores: { "user_role": "admin", "department": "IT" }
-Service B reads: Same session attributes available
-Service C updates: { "last_order": "order_123" }
-→ All services share the same session state!
-```
-
-### 3. Multi-Device Session Management
-One user can have multiple active sessions:
-
-```text
-User: user_123
-  ├─ Session 1: Web (Service A)
-  ├─ Session 2: Mobile (Service B)
-  └─ Session 3: Desktop (Service C)
-
-All sessions can be:
-  - Listed: get_sessions_by_login_id()
-  - Managed individually
-  - Terminated all at once: delete_all_sessions()
-```
-
-### 4. Microservices Architecture
-Share user sessions across API Gateway, User Service, Order Service, etc.
-
-### 5. Multi-Region Deployment
-Synchronize sessions across different geographic regions using shared storage.
-
-### 6. Load Balancing
-Maintain session consistency across multiple server instances.
-
-## Storage Backends
-
-### Redis Implementation (Recommended)
-
-```rust
-use redis::AsyncCommands;
-
-pub struct RedisDistributedStorage {
-    client: redis::Client,
-}
-
-#[async_trait]
-impl DistributedSessionStorage for RedisDistributedStorage {
-    async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) 
-        -> Result<(), SaTokenError> 
-    {
-        let mut conn = self.client.get_async_connection().await?;
-        let key = format!("distributed:session:{}", session.session_id);
-        let value = serde_json::to_string(&session)?;
-        
-        if let Some(ttl) = ttl {
-            conn.set_ex(&key, value, ttl.as_secs() as usize).await?;
-        } else {
-            conn.set(&key, value).await?;
-        }
-        
-        // Index by login_id for quick lookup
-        let index_key = format!("distributed:login:{}", session.login_id);
-        conn.sadd(index_key, &session.session_id).await?;
-        
-        Ok(())
-    }
-    
-    // ... implement other methods
-}
-```
-
-### Database Implementation
-
-```rust
-use sqlx::PgPool;
-
-pub struct PostgresDistributedStorage {
-    pool: PgPool,
-}
-
-#[async_trait]
-impl DistributedSessionStorage for PostgresDistributedStorage {
-    async fn save_session(&self, session: DistributedSession, ttl: Option<Duration>) 
-        -> Result<(), SaTokenError> 
-    {
-        let expires_at = ttl.map(|t| Utc::now() + chrono::Duration::from_std(t).unwrap());
-        
-        sqlx::query!(
-            "INSERT INTO distributed_sessions 
-             (session_id, login_id, token, service_id, attributes, expires_at)
-             VALUES ($1, $2, $3, $4, $5, $6)
-             ON CONFLICT (session_id) DO UPDATE 
-             SET attributes = $5, last_access = NOW()",
-            session.session_id,
-            session.login_id,
-            session.token,
-            session.service_id,
-            serde_json::to_value(&session.attributes)?,
-            expires_at,
-        )
-        .execute(&self.pool)
-        .await?;
-        
-        Ok(())
-    }
-    
-    // ... implement other methods
-}
-```
-
-## Best Practices
-
-### 1. Service Registration
-Use crypto-secure secret generation for service credentials:
-
-```rust
-let credential = ServiceCredential {
-    service_id: "user-service".to_string(),
-    service_name: "User Management Service".to_string(),
-    secret_key: generate_secure_secret(), // Use crypto-secure generation
+dsm.register_service(ServiceCredential {
+    service_id: "order-service".into(),
+    service_name: "Order".into(),
+    secret_key: "svc-secret".into(),
     created_at: Utc::now(),
-    permissions: vec!["user.read".to_string(), "user.write".to_string()],
-};
-manager.register_service(credential).await;
+    permissions: vec![],
+})
+.await?;
+dsm.verify_service("order-service", "svc-secret").await?;
+
+let session = dsm
+    .create_session("user_1".into(), token_str.clone())
+    .await?;
+
+dsm.set_attribute(&session.session_id, "cart".into(), "[1,2]".into())
+    .await?;
+let cart = dsm.get_attribute(&session.session_id, "cart").await?;
+
+dsm.refresh_session(&session.session_id).await?;
+dsm.delete_session(&session.session_id).await?;
 ```
 
-### 2. Session Creation with Context
-Add relevant attributes immediately after session creation:
+By login id: `get_sessions_by_login_id`, `delete_all_sessions`, `delete_sessions_by_token`.
+
+## Attach to SaTokenManager (optional)
 
 ```rust
-let session = manager.create_session(login_id, token).await?;
-
-// Add relevant attributes immediately
-manager.set_attribute(&session.session_id, "user_role".to_string(), "admin".to_string()).await?;
-manager.set_attribute(&session.session_id, "department".to_string(), "IT".to_string()).await?;
-manager.set_attribute(&session.session_id, "login_device".to_string(), "web".to_string()).await?;
+let manager = manager.with_distributed_manager(Arc::new(dsm));
 ```
 
-### 3. Cross-Service Access Pattern
-Always verify service identity and check permissions:
+You can still hold `DistributedSessionManager` directly in application state.
 
-```rust
-// 1. Verify service identity
-let service_cred = manager.verify_service("service-b", request.secret).await?;
+## Related
 
-// 2. Check permissions
-if !service_cred.permissions.contains(&"session.read".to_string()) {
-    return Err(SaTokenError::PermissionDenied);
-}
-
-// 3. Access session
-let session = manager.get_session(&request.session_id).await?;
-
-// 4. Refresh to keep session alive
-manager.refresh_session(&session.session_id).await?;
-```
-
-### 4. Multi-Device Logout
-Support both individual and bulk logout:
-
-```rust
-// Logout from all devices
-manager.delete_all_sessions(&login_id).await?;
-
-// Or logout specific session
-manager.delete_session(&session_id).await?;
-```
-
-### 5. Session Monitoring
-Monitor user's active sessions for security:
-
-```rust
-let sessions = manager.get_sessions_by_login_id(&login_id).await?;
-
-for session in sessions {
-    println!("Session: {} from service: {}, last active: {}", 
-        session.session_id,
-        session.service_id,
-        session.last_access
-    );
-    
-    // Check for suspicious activity
-    if is_suspicious(&session) {
-        manager.delete_session(&session.session_id).await?;
-    }
-}
-```
-
-### 6. Security Considerations
-
-- ✅ **Service Authentication**: Each service has unique secret_key
-- ✅ **Permission-Based Access**: Services have explicit permissions
-- ✅ **Session Timeout**: Configure appropriate TTL
-- ✅ **Data Encryption**: Encrypt sensitive session attributes
-- ✅ **Audit Logging**: Log session creation/deletion and cross-service access
-
-### 7. Production Recommendations
-
-1. **Use appropriate TTL** - Set session timeout based on security requirements (typically 1-24 hours)
-2. **Use persistent storage** - Implement Redis/Database storage for production (not in-memory)
-3. **Secure service credentials** - Use strong secret keys and rotate periodically
-4. **Monitor session count** - Track active sessions per user to detect anomalies
-5. **Implement cleanup** - Use storage TTL features for automatic cleanup
-6. **Enable encryption** - Encrypt sensitive session attributes at rest
-
-## Related Documentation
-
-- [WebSocket Authentication](/guide/websocket-auth.md)
-- [Online User Management](/guide/online-user-management.md)
-- [Event Listener Guide](/guide/event-listener.md)
-
-## License
-
-MIT OR Apache-2.0
-
+- [Online users](/guide/online-user-management.md)
+- [Storage](/guide/storage.md)
+- [SSO](/guide/sso.md)

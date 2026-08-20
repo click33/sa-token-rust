@@ -3,9 +3,9 @@
 //! Rocket request/response adapters for `SaRequest` / `SaResponse`.
 //! Rocket 请求／响应适配器，实现 `SaRequest` / `SaResponse`。
 
+use rocket::http::{ContentType, Cookie, Header, Status};
 use rocket::{Request, Response};
-use rocket::http::{Header, Cookie, Status, ContentType};
-use sa_token_adapter::context::{SaRequest, SaResponse, CookieOptions};
+use sa_token_adapter::context::{CookieOptions, SaRequest, SaResponse};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -23,36 +23,34 @@ impl<'a> RocketRequestAdapter<'a> {
 
 impl<'a> SaRequest for RocketRequestAdapter<'a> {
     fn get_header(&self, name: &str) -> Option<String> {
-        self.request.headers().get_one(name)
-            .map(|s| s.to_string())
+        self.request.headers().get_one(name).map(|s| s.to_string())
     }
-    
+
     fn get_cookie(&self, name: &str) -> Option<String> {
-        self.request.cookies().get(name)
+        self.request
+            .cookies()
+            .get(name)
             .map(|c| c.value().to_string())
     }
-    
+
     fn get_param(&self, name: &str) -> Option<String> {
         // Rocket 的查询参数需要从 URI 中提取
         if let Some(query) = self.request.uri().query() {
-            return parse_query_string(query.as_str())
-                .get(name)
-                .cloned();
+            return parse_query_string(query.as_str()).get(name).cloned();
         }
         None
     }
-    
+
     fn get_path(&self) -> String {
         self.request.uri().path().to_string()
     }
-    
+
     fn get_method(&self) -> String {
         self.request.method().to_string()
     }
-    
+
     fn get_client_ip(&self) -> Option<String> {
-        self.request.client_ip()
-            .map(|ip| ip.to_string())
+        self.request.client_ip().map(|ip| ip.to_string())
     }
 }
 
@@ -80,14 +78,17 @@ impl RocketCapturedRequest {
         let client_ip = req.client_ip().map(|ip| ip.to_string());
         let token_name_header = req.headers().get_one(token_name).map(|s| s.to_string());
         let authorization = if !token_name.eq_ignore_ascii_case("authorization") {
-            req.headers().get_one("Authorization").map(|s| s.to_string())
+            req.headers()
+                .get_one("Authorization")
+                .map(|s| s.to_string())
         } else {
             None
         };
         let cookie_token = req.cookies().get(token_name).map(|c| c.value().to_string());
-        let query_token = req.uri().query().and_then(|q| {
-            parse_query_string(q.as_str()).get(token_name).cloned()
-        });
+        let query_token = req
+            .uri()
+            .query()
+            .and_then(|q| parse_query_string(q.as_str()).get(token_name).cloned());
         Self {
             token_name: token_name.to_string(),
             token_name_header,
@@ -156,12 +157,13 @@ impl<'a> RocketResponseAdapter<'a> {
 
 impl<'a> SaResponse for RocketResponseAdapter<'a> {
     fn set_header(&mut self, name: &str, value: &str) {
-        self.response.set_header(Header::new(name.to_string(), value.to_string()));
+        self.response
+            .set_header(Header::new(name.to_string(), value.to_string()));
     }
-    
+
     fn set_cookie(&mut self, name: &str, value: &str, options: CookieOptions) {
         let mut cookie = Cookie::new(name.to_string(), value.to_string());
-        
+
         if let Some(domain) = options.domain {
             cookie.set_domain(domain);
         }
@@ -173,11 +175,11 @@ impl<'a> SaResponse for RocketResponseAdapter<'a> {
         }
         cookie.set_http_only(options.http_only);
         cookie.set_secure(options.secure);
-        
+
         if let Some(same_site) = options.same_site {
-            use sa_token_adapter::context::SameSite as SaSameSite;
             use rocket::http::SameSite;
-            
+            use sa_token_adapter::context::SameSite as SaSameSite;
+
             let ss = match same_site {
                 SaSameSite::Strict => SameSite::Strict,
                 SaSameSite::Lax => SameSite::Lax,
@@ -185,20 +187,21 @@ impl<'a> SaResponse for RocketResponseAdapter<'a> {
             };
             cookie.set_same_site(ss);
         }
-        
+
         self.response.adjoin_header(cookie);
     }
-    
+
     fn set_status(&mut self, status: u16) {
         if let Some(status_code) = Status::from_code(status) {
             self.response.set_status(status_code);
         }
     }
-    
+
     fn set_json_body<T: Serialize>(&mut self, body: T) -> Result<(), serde_json::Error> {
         let json = serde_json::to_string(&body)?;
         self.response.set_header(ContentType::JSON);
-        self.response.set_sized_body(Some(json.len()), std::io::Cursor::new(json));
+        self.response
+            .set_sized_body(Some(json.len()), std::io::Cursor::new(json));
         Ok(())
     }
 }
@@ -208,9 +211,10 @@ fn parse_query_string(query: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
     for pair in query.split('&') {
         if let Some((key, value)) = pair.split_once('=')
-            && let Ok(decoded_value) = urlencoding::decode(value) {
-                params.insert(key.to_string(), decoded_value.to_string());
-            }
+            && let Ok(decoded_value) = urlencoding::decode(value)
+        {
+            params.insert(key.to_string(), decoded_value.to_string());
+        }
     }
     params
 }

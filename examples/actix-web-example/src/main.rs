@@ -43,8 +43,8 @@ async fn main() -> anyhow::Result<()> {
     // 配置 Redis 存储
     // Configure Redis storage
     let redis_config = conf::RedisConfig {
-        url: "redis://:Aq23-hjPwFB3mBDNFp3W1@localhost:6379/0".to_string(),
-        prefix: Some("sa_token:".to_string()),
+        url: "redis://127.0.0.1:6379/0".to_string(),
+        prefix: Some(String::new()),
     };
 
     let sa_token_manager = conf::init_sa_token(Some(&redis_config))
@@ -90,12 +90,23 @@ async fn main() -> anyhow::Result<()> {
             // Register sa-token middleware
             .wrap(Logger::default())
             .app_data(sa_token_data.clone()) // 注入 Sa-Token 到应用状态 / Inject Sa-Token into application state
-            // 用来创建并注册Sa-Token的Actix-web中间件
-            // Create and register Sa-Token's Actix-web middleware
-            .wrap(SaTokenMiddleware::new(sa_token_state.clone()))
+            // Anonymous routes must be excluded; #[sa_ignore] does not skip this layer.
+            // 匿名路由必须排除；#[sa_ignore] 不会跳过本层。
+            .wrap(SaTokenMiddleware::with_path_auth(
+                sa_token_state.clone(),
+                PathAuthConfig::new()
+                    .include(vec!["/**".into()])
+                    .exclude(vec![
+                        "/".into(),
+                        "/api/health".into(),
+                        "/api/register".into(),
+                        "/api/login".into(),
+                        "/api/demo/stp-util".into(),
+                    ]),
+            ))
 
-            // 公开接口（不需要认证）
-            // Public endpoints (no authentication required)
+            // 公开接口（路径放行靠 PathAuthConfig::exclude）
+            // Public endpoints (allowed via PathAuthConfig::exclude)
             .route("/api/login", web::post().to(login))
             // 都未实现具体逻辑
             // All endpoints below are commented out (not implemented)
@@ -212,24 +223,21 @@ async fn init_test_permissions() {
     tracing::info!("✅ Permissions initialization completed!\n");
 }
 
-// ==================== 公开接口（使用 #[sa_ignore] 宏）====================
-// ==================== Public endpoints (using #[sa_ignore] macro) ====================
+// ==================== 公开接口（路径放行靠 PathAuthConfig::exclude）====================
+// ==================== Public endpoints (allowed via PathAuthConfig::exclude) ====================
 
-#[sa_ignore]
 async fn index() -> impl Responder {
     "Welcome to sa-token-rust! Visit /api/health to check health."
 }
 
-#[sa_ignore]
 async fn health_check() -> web::Json<serde_json::Value> {
     web::Json(serde_json::json!({
         "status": "ok",
         "service": "sa-token-rust",
-        "version": "0.1.0"
+        "version": "0.2.0"
     }))
 }
 
-#[sa_ignore]
 async fn register(
     _state: web::Data<SaTokenState>,
     req: web::Json<RegisterRequest>,
@@ -443,9 +451,8 @@ async fn manage_user(
 // ==================== StpUtil 演示接口 ====================
 // ==================== StpUtil demo endpoint ====================
 
-/// StpUtil 功能演示接口
-/// StpUtil feature demonstration endpoint
-#[sa_ignore]
+/// StpUtil 功能演示接口（路径已在 PathAuthConfig::exclude 中放行）
+/// StpUtil feature demonstration endpoint (path excluded via PathAuthConfig)
 async fn demo_stp_util_api(
     _state: web::Data<SaTokenState>, // 使用注入的 Sa-Token 状态 / Using injected Sa-Token state
 ) -> Result<web::Json<ApiResponse<String>>, ApiError> {

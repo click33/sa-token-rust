@@ -3,9 +3,9 @@
 use ntex::service::{Middleware, Service, ServiceCtx};
 use ntex::web::error::InternalError;
 use ntex::web::{Error, Error as WebError, ErrorRenderer, WebRequest, WebResponse};
-use sa_token_core::{error::messages, router::PathAuthConfig};
-use sa_token_plugin_ntex_core::{run_auth_flow, SaTokenState};
-use serde_json::json;
+use sa_token_core::router::PathAuthConfig;
+use sa_token_core::router::run_auth_flow;
+use sa_token_plugin_common::{SaLoginId, SaTokenState, rejection};
 
 use crate::adapter::NtexCapturedRequest;
 
@@ -67,32 +67,24 @@ where
     ) -> Result<Self::Response, Self::Error> {
         // Avoid borrowing `WebRequest` across `run_auth_flow` await.
         // 避免跨 `run_auth_flow` 的 await 仍借用 `WebRequest`。
-        let adapter = NtexCapturedRequest::capture(
-            &req,
-            self.state.manager.config.token_name.as_str(),
-        );
-        let flow =
-            run_auth_flow(&adapter, &self.state.manager, self.path_config.as_ref()).await;
+        let adapter =
+            NtexCapturedRequest::capture(&req, self.state.manager.config.token_name.as_str());
+        let flow = run_auth_flow(&adapter, &self.state.manager, self.path_config.as_ref()).await;
 
         if flow.should_reject() {
             return Err(WebError::from(InternalError::new(
-                json!({
-                    "code": 401,
-                    "message": messages::AUTH_ERROR
-                })
-                .to_string(),
+                rejection::unauthorized_json().to_string(),
                 ntex::http::StatusCode::UNAUTHORIZED,
             )));
         }
 
-        if self.path_config.is_none() {
-            if let Some(ref t) = flow.token {
-                req.extensions_mut().insert(t.clone());
-            }
-            if let Some(ref id) = flow.login_id {
-                req.extensions_mut().insert(id.clone());
-            }
+        if let Some(ref t) = flow.token {
+            req.extensions_mut().insert(t.clone());
         }
+        if let Some(ref id) = flow.login_id {
+            req.extensions_mut().insert(SaLoginId(id.clone()));
+        }
+        req.extensions_mut().insert(flow.context.clone());
 
         flow.run(ctx.call(&self.service, req)).await
     }

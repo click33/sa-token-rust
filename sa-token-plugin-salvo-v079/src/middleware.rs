@@ -3,10 +3,9 @@
 // 中文 | English
 // Salvo 认证中间件 | Salvo authentication middleware
 
+use sa_token_core::{StpUtil, router::run_auth_flow};
+use sa_token_plugin_common::{SaTokenState, rejection};
 use salvo::prelude::*;
-use sa_token_core::{StpUtil, error::messages};
-use serde_json::json;
-use sa_token_plugin_salvo_core::{run_auth_flow, SaTokenState};
 
 use crate::adapter::SalvoCapturedRequest;
 
@@ -27,7 +26,12 @@ pub fn auth_middleware() -> impl Handler {
 }
 
 #[handler]
-async fn auth_middleware_handler(req: &mut Request, res: &mut Response, depot: &mut Depot, ctrl: &mut FlowCtrl) {
+async fn auth_middleware_handler(
+    req: &mut Request,
+    res: &mut Response,
+    depot: &mut Depot,
+    ctrl: &mut FlowCtrl,
+) {
     // 中文 | English
     // 从请求头中获取 token | Get token from request headers
     let token = req
@@ -36,7 +40,7 @@ async fn auth_middleware_handler(req: &mut Request, res: &mut Response, depot: &
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.strip_prefix("Bearer "))
         .map(|s| s.to_string());
-    
+
     if let Some(token_str) = token {
         // 中文 | English
         // 验证 token 是否有效 | Verify if token is valid
@@ -52,11 +56,9 @@ async fn auth_middleware_handler(req: &mut Request, res: &mut Response, depot: &
             }
         }
     }
-    
-    // 中文 | English
-    // Token 无效，返回 401 | Token invalid, return 401
+
     res.status_code(StatusCode::UNAUTHORIZED);
-    res.render(Text::Json(r#"{"error":"Unauthorized"}"#));
+    res.render(Text::Json(rejection::unauthorized_json().to_string()));
     ctrl.skip_rest();
 }
 
@@ -82,7 +84,13 @@ struct PermissionMiddleware {
 
 #[handler]
 impl PermissionMiddleware {
-    async fn handle(&self, req: &mut Request, res: &mut Response, depot: &mut Depot, ctrl: &mut FlowCtrl) {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        res: &mut Response,
+        depot: &mut Depot,
+        ctrl: &mut FlowCtrl,
+    ) {
         // 中文 | English
         // 从 depot 获取 login_id | Get login_id from depot
         if let Ok(login_id) = depot.get::<String>("login_id") {
@@ -93,11 +101,9 @@ impl PermissionMiddleware {
                 return;
             }
         }
-        
-        // 中文 | English
-        // 无权限，返回 403 | No permission, return 403
+
         res.status_code(StatusCode::FORBIDDEN);
-        res.render(Text::Json(r#"{"error":"Forbidden"}"#));
+        res.render(Text::Json(rejection::forbidden_json(None).to_string()));
         ctrl.skip_rest();
     }
 }
@@ -121,17 +127,20 @@ impl SaCheckLoginMiddleware {
 
 #[salvo::async_trait]
 impl Handler for SaCheckLoginMiddleware {
-    async fn handle(&self, req: &mut Request, depot: &mut Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        depot: &mut Depot,
+        res: &mut Response,
+        ctrl: &mut FlowCtrl,
+    ) {
         let adapter =
             SalvoCapturedRequest::capture(req, self.state.manager.config.token_name.as_str());
         let flow = run_auth_flow(&adapter, &self.state.manager, None).await;
 
         if flow.token.is_none() || flow.login_id.is_none() {
             res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Text::Json(json!({
-                "code": 401,
-                "message": messages::AUTH_ERROR
-            }).to_string()));
+            res.render(Text::Json(rejection::unauthorized_json().to_string()));
             ctrl.skip_rest();
             return;
         }
@@ -161,33 +170,36 @@ impl SaCheckPermissionMiddleware {
     /// 中文 | English
     /// 创建新的权限检查中间件 | Create new permission check middleware
     pub fn new(state: SaTokenState, permission: impl Into<String>) -> Self {
-        Self { state, permission: permission.into() }
+        Self {
+            state,
+            permission: permission.into(),
+        }
     }
 }
 
 #[salvo::async_trait]
 impl Handler for SaCheckPermissionMiddleware {
-    async fn handle(&self, req: &mut Request, depot: &mut Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        depot: &mut Depot,
+        res: &mut Response,
+        ctrl: &mut FlowCtrl,
+    ) {
         let adapter =
             SalvoCapturedRequest::capture(req, self.state.manager.config.token_name.as_str());
         let flow = run_auth_flow(&adapter, &self.state.manager, None).await;
 
         let Some(login_id) = flow.login_id.clone() else {
             res.status_code(StatusCode::FORBIDDEN);
-            res.render(Text::Json(json!({
-                "code": 403,
-                "message": messages::PERMISSION_REQUIRED
-            }).to_string()));
+            res.render(Text::Json(rejection::forbidden_json(None).to_string()));
             ctrl.skip_rest();
             return;
         };
 
         if !StpUtil::has_permission(&login_id, &self.permission).await {
             res.status_code(StatusCode::FORBIDDEN);
-            res.render(Text::Json(json!({
-                "code": 403,
-                "message": messages::PERMISSION_REQUIRED
-            }).to_string()));
+            res.render(Text::Json(rejection::forbidden_json(None).to_string()));
             ctrl.skip_rest();
             return;
         }
@@ -215,33 +227,36 @@ impl SaCheckRoleMiddleware {
     /// 中文 | English
     /// 创建新的角色检查中间件 | Create new role check middleware
     pub fn new(state: SaTokenState, role: impl Into<String>) -> Self {
-        Self { state, role: role.into() }
+        Self {
+            state,
+            role: role.into(),
+        }
     }
 }
 
 #[salvo::async_trait]
 impl Handler for SaCheckRoleMiddleware {
-    async fn handle(&self, req: &mut Request, depot: &mut Depot, res: &mut Response, ctrl: &mut FlowCtrl) {
+    async fn handle(
+        &self,
+        req: &mut Request,
+        depot: &mut Depot,
+        res: &mut Response,
+        ctrl: &mut FlowCtrl,
+    ) {
         let adapter =
             SalvoCapturedRequest::capture(req, self.state.manager.config.token_name.as_str());
         let flow = run_auth_flow(&adapter, &self.state.manager, None).await;
 
         let Some(login_id) = flow.login_id.clone() else {
             res.status_code(StatusCode::FORBIDDEN);
-            res.render(Text::Json(json!({
-                "code": 403,
-                "message": messages::ROLE_REQUIRED
-            }).to_string()));
+            res.render(Text::Json(rejection::forbidden_role_json().to_string()));
             ctrl.skip_rest();
             return;
         };
 
         if !StpUtil::has_role(&login_id, &self.role).await {
             res.status_code(StatusCode::FORBIDDEN);
-            res.render(Text::Json(json!({
-                "code": 403,
-                "message": messages::ROLE_REQUIRED
-            }).to_string()));
+            res.render(Text::Json(rejection::forbidden_role_json().to_string()));
             ctrl.skip_rest();
             return;
         }

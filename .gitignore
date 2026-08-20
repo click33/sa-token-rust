@@ -25,3 +25,4 @@ Thumbs.db
 examples/axum-full-example/target
 examples/poem-full-example/target
 target
+/CHANGELOG.md

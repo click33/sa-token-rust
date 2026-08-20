@@ -8,10 +8,10 @@ mod common;
 use std::sync::Arc;
 
 use sa_token_adapter::SaRequest;
-use sa_token_core::router::{run_auth_flow, PathAuthConfig};
-use sa_token_core::{config::TokenStyle, SaTokenConfig, StpUtil};
+use sa_token_core::router::{PathAuthConfig, run_auth_flow};
+use sa_token_core::{SaTokenConfig, StpUtil, config::TokenStyle};
 use sa_token_plugin_tonic::{
-    get_login_id_from_request, SaTokenLoginId, SaTokenState, TonicCapturedRequest,
+    SaTokenLoginId, SaTokenState, TonicCapturedRequest, get_login_id_from_request,
 };
 use sa_token_storage_memory::MemoryStorage;
 
@@ -28,7 +28,7 @@ fn init_manager() -> Arc<sa_token_core::SaTokenManager> {
                 .token_style(TokenStyle::Uuid)
                 .build_config();
             let manager = sa_token_core::SaTokenManager::new(storage, config);
-            StpUtil::init_manager(manager.clone());
+            let _ = StpUtil::try_init_manager(manager.clone());
             Arc::new(manager)
         })
         .clone()
@@ -76,18 +76,9 @@ fn test_captured_request_header_case_insensitive() {
 
     let captured = TonicCapturedRequest::from_metadata(&metadata, "/test".to_string(), "GRPC");
 
-    assert_eq!(
-        captured.get_header("Authorization").unwrap(),
-        "Bearer xyz"
-    );
-    assert_eq!(
-        captured.get_header("authorization").unwrap(),
-        "Bearer xyz"
-    );
-    assert_eq!(
-        captured.get_header("AUTHORIZATION").unwrap(),
-        "Bearer xyz"
-    );
+    assert_eq!(captured.get_header("Authorization").unwrap(), "Bearer xyz");
+    assert_eq!(captured.get_header("authorization").unwrap(), "Bearer xyz");
+    assert_eq!(captured.get_header("AUTHORIZATION").unwrap(), "Bearer xyz");
 }
 
 // ============================================================================
@@ -149,19 +140,12 @@ async fn test_path_config_protected_rpc_no_token_rejects() {
 #[tokio::test]
 async fn test_valid_token_returns_login_id_not_token_string() {
     let state = test_state();
-    let token = state
-        .manager
-        .login("tonic_test_user")
-        .await
-        .expect("login");
+    let token = state.manager.login("tonic_test_user").await.expect("login");
     let path_config = PathAuthConfig::new()
         .include(vec!["/auth.AuthService/**".to_string()])
         .exclude(vec!["/auth.AuthService/Login".to_string()]);
 
-    let captured = make_captured_request(
-        "/auth.AuthService/GetUserInfo",
-        Some(token.as_str()),
-    );
+    let captured = make_captured_request("/auth.AuthService/GetUserInfo", Some(token.as_str()));
     let flow = run_auth_flow(&captured, &state.manager, Some(&path_config)).await;
 
     assert!(!flow.should_reject());
@@ -177,16 +161,10 @@ async fn test_get_login_id_from_request_reads_typed_extension() {
     request
         .extensions_mut()
         .insert(SaTokenLoginId("typed_user".to_string()));
-    assert_eq!(
-        get_login_id_from_request(&request).unwrap(),
-        "typed_user"
-    );
+    assert_eq!(get_login_id_from_request(&request).unwrap(), "typed_user");
 
     request.extensions_mut().insert("raw_string".to_string());
-    assert_eq!(
-        get_login_id_from_request(&request).unwrap(),
-        "typed_user"
-    );
+    assert_eq!(get_login_id_from_request(&request).unwrap(), "typed_user");
 }
 
 // ============================================================================
@@ -200,10 +178,8 @@ async fn test_invalid_token_rejected() {
         .include(vec!["/auth.AuthService/**".to_string()])
         .exclude(vec!["/auth.AuthService/Login".to_string()]);
 
-    let captured = make_captured_request(
-        "/auth.AuthService/GetUserInfo",
-        Some("invalid-token-abc"),
-    );
+    let captured =
+        make_captured_request("/auth.AuthService/GetUserInfo", Some("invalid-token-abc"));
     let flow = run_auth_flow(&captured, &state.manager, Some(&path_config)).await;
 
     assert!(flow.should_reject());

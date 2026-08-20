@@ -1,7 +1,12 @@
+# ══════════════════════════════════════════════════════════════════
+# 根 package：facade crate，供 `cargo add sa-token-rust` 一键引入。
+# 同时是 workspace root，承载 [workspace.*] 全部配置。
+# ══════════════════════════════════════════════════════════════════
 [package]
 name = "sa-token-rust"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -11,14 +16,42 @@ keywords.workspace = true
 categories.workspace = true
 description = "A powerful Rust authentication and authorization framework"
 
+# facade 只依赖基础 crate；不引入 tokio 等运行时，
+# 由下游自行选择运行时版本
 [dependencies]
-sa-token-core = { version = "0.1.18", path = "./sa-token-core" }
-sa-token-storage-memory = { version = "0.1.18", path = "./sa-token-storage-memory" }
+sa-token-core = { workspace = true }
+sa-token-adapter = { workspace = true }
+sa-token-macro = { workspace = true }
+sa-token-storage-memory = { workspace = true, optional = true }
+sa-token-storage-redis = { workspace = true, optional = true }
+sa-token-storage-database = { workspace = true, optional = true }
+
+# ── dev-dependencies：仅供本 crate 的 9 个 example target ──
+# 缺失时 cargo clippy --all-targets / cargo test --no-run 会以
+# E0433(38) / E0752(8) / E0432(4) / E0195(10) 共 59 条错误失败
+[dev-dependencies]
 tokio = { workspace = true }
 async-trait = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
+
+[features]
+default = ["memory"]
+memory = ["dep:sa-token-storage-memory"]
+redis = ["dep:sa-token-storage-redis"]
+database = ["dep:sa-token-storage-database"]
+full = ["memory", "redis", "database"]
+fory = ["sa-token-core/fory", "sa-token-adapter/fory"]
+
+# docs.rs 用 full 构建，确保三种存储后端的 re-export 都出现在文档中
+[package.metadata.docs.rs]
+features = ["full"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true
 
 [[example]]
 name = "event_listener_example"
@@ -52,6 +85,15 @@ path = "examples/distributed_session_example.rs"
 name = "sso_example"
 path = "examples/sso_example.rs"
 
+# 此前依赖 Cargo 自动发现，显式声明使 target 集合可审计
+[[example]]
+name = "stp_util_example"
+path = "examples/stp_util_example.rs"
+
+# ══════════════════════════════════════════════════════════════════
+# workspace 成员与 exclude：tonic-full-example 仅保留在 members
+# （原先同时出现在两处，导致 cargo metadata 语义矛盾）
+# ══════════════════════════════════════════════════════════════════
 [workspace]
 members = [
     "sa-token-integration-tests",
@@ -61,48 +103,39 @@ members = [
     "sa-token-storage-memory",
     "sa-token-storage-redis",
     "sa-token-storage-database",
+    "sa-token-plugin-common",
     "sa-token-plugin-axum",
     "sa-token-plugin-actix-web",
-    "sa-token-plugin-actix-web-core",
     "sa-token-plugin-actix-web-v4",
     "sa-token-plugin-actix-web-v5",
     "sa-token-plugin-rocket",
-    "sa-token-plugin-rocket-core",
     "sa-token-plugin-rocket-v05",
     "sa-token-plugin-warp",
     "sa-token-plugin-poem",
     "sa-token-plugin-salvo",
-    "sa-token-plugin-salvo-core",
     "sa-token-plugin-salvo-v079",
     "sa-token-plugin-tide",
     "sa-token-plugin-gotham",
-    "sa-token-plugin-gotham-core",
     "sa-token-plugin-gotham-v074",
     "sa-token-plugin-ntex",
-    "sa-token-plugin-ntex-core",
     "sa-token-plugin-ntex-v212",
     "sa-token-plugin-tonic",
     "examples/tonic-full-example",
 ]
-
-# Examples are excluded from default workspace build to reduce warnings
-# To build examples, use: 
-#   cargo build -p axum-full-example
-#   cargo build -p poem-full-example
-#   cargo build -p actix-web-example
-#   cargo build -p tonic-full-example
 exclude = [
     "examples/axum-full-example",
     "examples/poem-full-example",
     "examples/actix-web-example",
-    "examples/tonic-full-example",
 ]
-
-resolver = "2"
+# edition 2024 对应 resolver 3（原为 "2"，会禁用 feature 解析修正）
+resolver = "3"
 
 [workspace.package]
-version = "0.1.18"
+# 0.1.18 → 0.2.0：破坏性变更版本（总纲第三节）
+version = "0.2.0"
 edition = "2024"
+# MSRV：edition 2024 要求 Rust >= 1.85
+rust-version = "1.85"
 license = "MIT OR Apache-2.0"
 authors = ["金书记"]
 readme = "README.md"
@@ -113,68 +146,117 @@ keywords = ["authentication", "authorization", "token", "security", "web"]
 categories = ["authentication", "web-programming"]
 
 [workspace.dependencies]
-# 核心依赖
+# ── 内部 crate：版本号单点维护（详见步骤 6.2）──
+sa-token-core = { version = "0.2.0", path = "sa-token-core" }
+sa-token-adapter = { version = "0.2.0", path = "sa-token-adapter" }
+sa-token-macro = { version = "0.2.0", path = "sa-token-macro" }
+sa-token-storage-memory = { version = "0.2.0", path = "sa-token-storage-memory" }
+sa-token-storage-redis = { version = "0.2.0", path = "sa-token-storage-redis" }
+sa-token-storage-database = { version = "0.2.0", path = "sa-token-storage-database" }
+sa-token-plugin-common = { version = "0.2.0", path = "sa-token-plugin-common" }
+
+# ── 第三方依赖 ──
 tokio = { version = "1.52.3", features = ["full"] }
 async-trait = "0.1"
 thiserror = "2.0.18"
 anyhow = "1.0"
-
-# 序列化
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
-
-# Token相关
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
 jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
-
-# 加密
 sha2 = "0.11.0"
+argon2 = "0.5"
+hmac = "0.13"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
 bcrypt = "0.19.1"
-
-# 时间处理
 chrono = { version = "0.4.44", features = ["serde"] }
-
-# Redis
 redis = { version = "1.2.1", features = ["tokio-comp", "connection-manager"] }
-
-# 日志
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-
-# HTTP（通用）
 http = "1.4.0"
 tower = "0.5.3"
-
-# URL
 urlencoding = "2.1.3"
-
-# 正则表达式
 regex = "1.12.3"
+base64 = "0.22"
+getrandom = "0.2"
+# 二进制序列化：由 sa-token-adapter 的 fory feature 以 optional dep 引用（P2 已接线）
+fory = "1.6.1"
 
+# ══════════════════════════════════════════════════════════════════
+# lint 三级门禁（完整说明见步骤 4.1）
+# ══════════════════════════════════════════════════════════════════
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_must_use = "deny"
+unused_lifetimes = "deny"
+unused_qualifications = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "allow", priority = -1 }
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+float_cmp = "deny"
+mem_forget = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
+unwrap_in_result = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+too_many_lines = "allow"
+
+# ── 构建配置（详见步骤 7.5）──
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[profile.dev.package."*"]
+opt-level = 2
+
+# test 不设 panic = "abort"：#[should_panic] 测试依赖 unwind
+[profile.test]
+opt-level = 1
+
+# ══════════════════════════════════════════════════════════════════
+# [patch.crates-io]：仅保留 21 条插件 crate。
+# 基础 6 crate 已由 [workspace.dependencies] 的 path 字段解析，无需 patch。
+# 保留插件 patch 的原因：facade/v* 之间是 version + path 依赖，
+# 在版本 bump 过渡期（crates.io 尚无 0.2.0）需本地覆盖才能解析。
+# patch 段不随 cargo publish 上传，仅影响本仓库开发。
+# P8: 5 个 *-core crate 已删除，对应 patch 已移除。
+# ══════════════════════════════════════════════════════════════════
 [patch.crates-io]
-sa-token-core = { path = "sa-token-core" }
-sa-token-adapter = { path = "sa-token-adapter" }
-sa-token-macro = { path = "sa-token-macro" }
-sa-token-storage-memory = { path = "sa-token-storage-memory" }
-sa-token-storage-redis = { path = "sa-token-storage-redis" }
-sa-token-storage-database = { path = "sa-token-storage-database" }
+sa-token-plugin-common = { path = "sa-token-plugin-common" }
 sa-token-plugin-actix-web = { path = "sa-token-plugin-actix-web" }
-sa-token-plugin-actix-web-core = { path = "sa-token-plugin-actix-web-core" }
 sa-token-plugin-actix-web-v4 = { path = "sa-token-plugin-actix-web-v4" }
 sa-token-plugin-actix-web-v5 = { path = "sa-token-plugin-actix-web-v5" }
 sa-token-plugin-axum = { path = "sa-token-plugin-axum" }
 sa-token-plugin-gotham = { path = "sa-token-plugin-gotham" }
-sa-token-plugin-gotham-core = { path = "sa-token-plugin-gotham-core" }
 sa-token-plugin-gotham-v074 = { path = "sa-token-plugin-gotham-v074" }
 sa-token-plugin-ntex = { path = "sa-token-plugin-ntex" }
-sa-token-plugin-ntex-core = { path = "sa-token-plugin-ntex-core" }
 sa-token-plugin-ntex-v212 = { path = "sa-token-plugin-ntex-v212" }
 sa-token-plugin-poem = { path = "sa-token-plugin-poem" }
 sa-token-plugin-rocket = { path = "sa-token-plugin-rocket" }
-sa-token-plugin-rocket-core = { path = "sa-token-plugin-rocket-core" }
 sa-token-plugin-rocket-v05 = { path = "sa-token-plugin-rocket-v05" }
 sa-token-plugin-salvo = { path = "sa-token-plugin-salvo" }
-sa-token-plugin-salvo-core = { path = "sa-token-plugin-salvo-core" }
 sa-token-plugin-salvo-v079 = { path = "sa-token-plugin-salvo-v079" }
 sa-token-plugin-tide = { path = "sa-token-plugin-tide" }
 sa-token-plugin-warp = { path = "sa-token-plugin-warp" }

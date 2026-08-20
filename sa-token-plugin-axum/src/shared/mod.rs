@@ -3,4 +3,3 @@
 //! Framework-agnostic pieces (HTTP adapter + state).
 
 pub mod adapter;
-pub mod state;

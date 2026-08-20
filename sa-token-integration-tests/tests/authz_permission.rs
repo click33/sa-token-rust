@@ -90,7 +90,9 @@ async fn test_add_individual_permission() {
 #[serial]
 async fn test_remove_permission() {
     setup_user_with_perms("user_c", vec!["user:list", "user:add"]).await;
-    StpUtil::remove_permission("user_c", "user:list").await.unwrap();
+    StpUtil::remove_permission("user_c", "user:list")
+        .await
+        .unwrap();
     assert!(!StpUtil::has_permission("user_c", "user:list").await);
     assert!(StpUtil::has_permission("user_c", "user:add").await);
 }
@@ -111,14 +113,23 @@ async fn test_permission_wildcard_single_star_prefix() {
 #[tokio::test]
 #[serial]
 async fn test_permission_wildcard_nested_prefix() {
-    // The current wildcard implementation only supports trailing `:*` patterns.
-    // `admin:*` matches `admin:user:delete`, `admin:user:list`, etc.
+    // B2-14：`*` 只匹配单段；跨段需 `**`。
+    // B2-14: `*` matches one segment only; use `**` for nested paths.
     setup_user_with_perms("user_d", vec!["admin:*"]).await;
-    assert!(StpUtil::has_permission("user_d", "admin:user:delete").await);
-    assert!(StpUtil::has_permission("user_d", "admin:user:list").await);
+    // 单段：匹配 | single segment: match
     assert!(StpUtil::has_permission("user_d", "admin:settings").await);
-    // `admin:*` does NOT match `other:admin` (different namespace)
+    // 多段：单星不匹配 | multi-segment: single-star must not match
+    assert!(!StpUtil::has_permission("user_d", "admin:user:delete").await);
+    assert!(!StpUtil::has_permission("user_d", "admin:user:list").await);
+    // 跨命名空间 | cross-namespace
     assert!(!StpUtil::has_permission("user_d", "other:admin").await);
+
+    // 双星通配可覆盖嵌套路径 | double-star covers nested paths
+    setup_user_with_perms("user_d2", vec!["admin:**"]).await;
+    assert!(StpUtil::has_permission("user_d2", "admin:settings").await);
+    assert!(StpUtil::has_permission("user_d2", "admin:user:delete").await);
+    assert!(StpUtil::has_permission("user_d2", "admin:user:list").await);
+    assert!(!StpUtil::has_permission("user_d2", "other:admin").await);
 }
 
 #[tokio::test]

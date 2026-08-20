@@ -5,9 +5,9 @@
 
 mod common;
 
-use std::sync::Arc;
 use sa_token_core::{NonceManager, SaTokenError};
 use sa_token_storage_memory::MemoryStorage;
+use std::sync::Arc;
 
 fn nonce_mgr(ttl: i64) -> NonceManager {
     NonceManager::new(Arc::new(MemoryStorage::new()), ttl)
@@ -88,11 +88,16 @@ async fn test_double_consume_replay_detected() {
     let mgr = nonce_mgr(60);
     let nonce = mgr.generate();
     // First use succeeds
-    mgr.validate_and_consume(&nonce, "user_123").await.expect("first");
+    mgr.validate_and_consume(&nonce, "user_123")
+        .await
+        .expect("first");
     // Second use = replay attack
     let result = mgr.validate_and_consume(&nonce, "user_123").await;
     assert!(result.is_err(), "replay should be rejected");
-    assert!(matches!(result.unwrap_err(), SaTokenError::NonceAlreadyUsed));
+    assert!(matches!(
+        result.unwrap_err(),
+        SaTokenError::NonceAlreadyUsed
+    ));
 }
 
 #[tokio::test]
@@ -101,7 +106,10 @@ async fn test_invalid_nonce_format_timestamp_check() {
     // Malformed nonce should fail timestamp check
     let result = mgr.check_timestamp("not_a_valid_nonce", 60);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), SaTokenError::InvalidNonceFormat));
+    assert!(matches!(
+        result.unwrap_err(),
+        SaTokenError::InvalidNonceFormat
+    ));
 }
 
 #[tokio::test]
@@ -110,7 +118,10 @@ async fn test_bad_timestamp_in_nonce() {
     // nonce_bad_xyz — "bad" is not a valid timestamp
     let result = mgr.check_timestamp("nonce_bad_xyz", 60);
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), SaTokenError::InvalidNonceTimestamp));
+    assert!(matches!(
+        result.unwrap_err(),
+        SaTokenError::InvalidNonceTimestamp
+    ));
 }
 
 #[tokio::test]
@@ -129,5 +140,8 @@ async fn test_nonce_timestamp_outside_window() {
 async fn test_cleanup_is_noop() {
     let mgr = nonce_mgr(60);
     let result = mgr.cleanup_expired().await;
-    assert!(result.is_ok(), "cleanup should succeed (noop for memory storage)");
+    assert!(
+        result.is_ok(),
+        "cleanup should succeed (noop for memory storage)"
+    );
 }

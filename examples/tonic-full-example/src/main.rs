@@ -74,12 +74,15 @@ impl auth::auth_service_server::AuthService for AuthServiceImpl {
             ));
         }
 
-        let token = self.state.manager.login(user_id).await.map_err(|e| {
-            Status::internal(format!("Login failed: {}", e))
-        })?;
+        let token = self
+            .state
+            .manager
+            .login(user_id)
+            .await
+            .map_err(|e| Status::internal(format!("Login failed: {}", e)))?;
 
-        let permissions = sa_token_core::StpUtil::get_permissions(user_id).await;
-        let roles = sa_token_core::StpUtil::get_roles(user_id).await;
+        let permissions = StpUtil::get_permissions(user_id).await;
+        let roles = StpUtil::get_roles(user_id).await;
 
         tracing::info!(
             "User {} logged in, permissions: {:?}, roles: {:?}",
@@ -107,8 +110,8 @@ impl auth::auth_service_server::AuthService for AuthServiceImpl {
 
         tracing::info!("GetUserInfo request from user: {}", login_id);
 
-        let permissions = sa_token_core::StpUtil::get_permissions(&login_id).await;
-        let roles = sa_token_core::StpUtil::get_roles(&login_id).await;
+        let permissions = StpUtil::get_permissions(&login_id).await;
+        let roles = StpUtil::get_roles(&login_id).await;
 
         Ok(Response::new(auth::UserInfoResponse {
             user_id: login_id,
@@ -128,7 +131,7 @@ impl auth::auth_service_server::AuthService for AuthServiceImpl {
 
         tracing::info!("GetPermissions request from user: {}", login_id);
 
-        let permissions = sa_token_core::StpUtil::get_permissions(&login_id).await;
+        let permissions = StpUtil::get_permissions(&login_id).await;
 
         Ok(Response::new(auth::PermissionsListResponse { permissions }))
     }
@@ -144,7 +147,7 @@ impl auth::auth_service_server::AuthService for AuthServiceImpl {
 
         tracing::info!("GetRoles request from user: {}", login_id);
 
-        let roles = sa_token_core::StpUtil::get_roles(&login_id).await;
+        let roles = StpUtil::get_roles(&login_id).await;
 
         Ok(Response::new(auth::RolesListResponse { roles }))
     }
@@ -157,7 +160,7 @@ impl auth::auth_service_server::AuthService for AuthServiceImpl {
 async fn init_test_permissions() {
     tracing::info!("Initializing test user permissions...");
 
-    sa_token_core::StpUtil::set_permissions(
+    StpUtil::set_permissions(
         "admin",
         vec![
             "user:list".to_string(),
@@ -171,26 +174,26 @@ async fn init_test_permissions() {
     .await
     .unwrap();
 
-    sa_token_core::StpUtil::set_roles("admin", vec!["admin".to_string(), "user".to_string()])
+    StpUtil::set_roles("admin", vec!["admin".to_string(), "user".to_string()])
         .await
         .unwrap();
 
-    sa_token_core::StpUtil::set_permissions(
+    StpUtil::set_permissions(
         "user",
         vec!["user:list".to_string(), "user:view".to_string()],
     )
     .await
     .unwrap();
 
-    sa_token_core::StpUtil::set_roles("user", vec!["user".to_string()])
+    StpUtil::set_roles("user", vec!["user".to_string()])
         .await
         .unwrap();
 
-    sa_token_core::StpUtil::set_permissions("guest", vec!["user:view".to_string()])
+    StpUtil::set_permissions("guest", vec!["user:view".to_string()])
         .await
         .unwrap();
 
-    sa_token_core::StpUtil::set_roles("guest", vec!["guest".to_string()])
+    StpUtil::set_roles("guest", vec!["guest".to_string()])
         .await
         .unwrap();
 
@@ -211,7 +214,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. 创建 sa-token 状态 | Create sa-token state
     let sa_token_state = SaTokenState::builder()
-        .storage(Arc::new(sa_token_plugin_tonic::MemoryStorage::new()))
+        .storage(Arc::new(MemoryStorage::new()))
         .token_name("satoken")
         .timeout(86400)
         .build();
@@ -242,7 +245,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Protected RPCs: GetUserInfo, GetPermissions, GetRoles");
 
     tonic::transport::Server::builder()
-        .layer(tower::ServiceBuilder::new().layer(grpc_auth_layer).into_inner())
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(grpc_auth_layer)
+                .into_inner(),
+        )
         .add_service(auth::auth_service_server::AuthServiceServer::new(
             AuthServiceImpl::new(sa_token_state.clone()),
         ))

@@ -1,9 +1,16 @@
 // Author: 金书记
 //
 //! sa-token-macro 基础使用示例
+//!
+//! In a Web app, public routes must use `PathAuthConfig::exclude`.
+//! `#[sa_ignore]` only skips macro-inserted StpUtil checks — it does not skip middleware.
+//! 在 Web 应用中，公开路由请用 `PathAuthConfig::exclude`。
+//! `#[sa_ignore]` 只跳过宏插入的 StpUtil 检查，不会跳过中间件。
 
-use sa_token_macro::*;
+#![allow(clippy::print_stdout, clippy::print_stderr)]
+
 use sa_token_core::SaTokenResult;
+use sa_token_macro::*;
 
 // ============ 登录检查示例 ============
 
@@ -21,12 +28,18 @@ async fn get_user(id: u64) -> SaTokenResult<String> {
 
 #[sa_check_permission("user:write")]
 async fn update_user(id: u64, name: String) -> SaTokenResult<String> {
-    Ok(format!("Update user {} to {} - requires user:write permission", id, name))
+    Ok(format!(
+        "Update user {} to {} - requires user:write permission",
+        id, name
+    ))
 }
 
 #[sa_check_permission("user:delete")]
 async fn delete_user(id: u64) -> SaTokenResult<String> {
-    Ok(format!("Delete user {} - requires user:delete permission", id))
+    Ok(format!(
+        "Delete user {} - requires user:delete permission",
+        id
+    ))
 }
 
 // ============ 角色检查示例 ============
@@ -38,7 +51,10 @@ async fn admin_panel() -> SaTokenResult<String> {
 
 #[sa_check_role("moderator")]
 async fn moderate_content(content_id: u64) -> SaTokenResult<String> {
-    Ok(format!("Moderate content {} - requires moderator role", content_id))
+    Ok(format!(
+        "Moderate content {} - requires moderator role",
+        content_id
+    ))
 }
 
 // ============ 多权限检查示例 ============
@@ -92,7 +108,7 @@ async fn read_or_admin() -> SaTokenResult<String> {
     Ok("Read or admin role".to_string())
 }
 
-// ============ 忽略认证示例 ============
+// ============ #[sa_ignore] 示例（无 HTTP 层时可保留；Web 公开路径请用 exclude）============
 
 #[sa_ignore]
 async fn public_api() -> String {
@@ -104,7 +120,7 @@ async fn health_check() -> String {
     "OK - health check doesn't need auth".to_string()
 }
 
-// ============ 结构体级别的忽略认证 ============
+// ============ 结构体级别的 #[sa_ignore]（无 HTTP 层）============
 
 #[sa_ignore]
 struct PublicController;
@@ -120,7 +136,7 @@ impl PublicController {
     }
 }
 
-// ============ impl块级别的忽略认证 ============
+// ============ impl块级别的 #[sa_ignore]（无 HTTP 层）============
 
 struct ApiController;
 
@@ -146,19 +162,19 @@ impl UserController {
     async fn register(username: String) -> String {
         format!("Register user: {} - public", username)
     }
-    
+
     // 需要登录
     #[sa_check_login]
     async fn profile() -> SaTokenResult<String> {
         Ok("User profile - requires login".to_string())
     }
-    
+
     // 需要特定权限
     #[sa_check_permission("user:update_profile")]
     async fn update_profile(data: String) -> SaTokenResult<String> {
         Ok(format!("Update profile: {} - requires permission", data))
     }
-    
+
     // 需要管理员角色
     #[sa_check_role("admin")]
     async fn list_all_users() -> SaTokenResult<String> {
@@ -169,11 +185,11 @@ impl UserController {
 #[tokio::main]
 async fn main() {
     println!("=== sa-token-macro 示例 ===\n");
-    
+
     // 注意：以下带认证检查的函数在未初始化 SaTokenManager 时会返回 Err
     // 实际使用时需要先调用 StpUtil::init_manager() 并通过中间件设置上下文
-    
-    println!("1. 公开API（忽略认证）:");
+
+    println!("1. 公开API（#[sa_ignore]，无 HTTP 层）:");
     println!("   {}", public_api().await);
     println!("   {}", health_check().await);
 

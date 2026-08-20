@@ -34,7 +34,11 @@ async fn test_login_multiple_users_get_different_tokens() {
     let mgr = setup::fresh_manager();
     let t1 = mgr.login("user_a").await.expect("login a");
     let t2 = mgr.login("user_b").await.expect("login b");
-    assert_ne!(t1.as_str(), t2.as_str(), "different users → different tokens");
+    assert_ne!(
+        t1.as_str(),
+        t2.as_str(),
+        "different users → different tokens"
+    );
 }
 
 #[tokio::test]
@@ -42,23 +46,34 @@ async fn test_logout_by_token_then_is_valid_false() {
     let mgr = setup::fresh_manager();
     let token = mgr.login("user_1").await.expect("login");
     mgr.logout(&token).await.expect("logout");
-    assert!(!mgr.is_valid(&token).await, "should not be valid after logout");
+    assert!(
+        !mgr.is_valid(&token).await,
+        "should not be valid after logout"
+    );
 }
 
 #[tokio::test]
 async fn test_logout_by_login_id() {
     let mgr = setup::fresh_manager();
     let token = mgr.login("user_1").await.expect("login");
-    mgr.logout_by_login_id("user_1").await.expect("logout_by_login_id");
-    assert!(!mgr.is_valid(&token).await, "token should be invalid after logout by login_id");
+    mgr.logout_by_login_id("login", "user_1")
+        .await
+        .expect("logout_by_login_id");
+    assert!(
+        !mgr.is_valid(&token).await,
+        "token should be invalid after logout by login_id"
+    );
 }
 
 #[tokio::test]
 async fn test_kick_out_then_is_login_false() {
     let mgr = setup::fresh_manager();
     let token = mgr.login("user_1").await.expect("login");
-    mgr.kick_out("user_1").await.expect("kick_out");
-    assert!(!mgr.is_valid(&token).await, "kicked-out token should be invalid");
+    mgr.kick_out("login", "user_1").await.expect("kick_out");
+    assert!(
+        !mgr.is_valid(&token).await,
+        "kicked-out token should be invalid"
+    );
 }
 
 #[tokio::test]
@@ -66,7 +81,11 @@ async fn test_is_concurrent_multiple_logins_produce_different_tokens() {
     let mgr = setup::fresh_manager(); // is_concurrent = true (default)
     let t1 = mgr.login("user_1").await.expect("first login");
     let t2 = mgr.login("user_1").await.expect("second login");
-    assert_ne!(t1.as_str(), t2.as_str(), "concurrent logins → different tokens");
+    assert_ne!(
+        t1.as_str(),
+        t2.as_str(),
+        "concurrent logins → different tokens"
+    );
 }
 
 #[tokio::test]
@@ -80,10 +99,19 @@ async fn test_non_concurrent_mode_kicks_previous_sessions() {
         .build_config();
     let mgr = setup::fresh_manager_with_config(config);
     let t1 = mgr.login("user_1").await.expect("first login");
-    assert!(mgr.is_valid(&t1).await, "first token should be valid after first login");
+    assert!(
+        mgr.is_valid(&t1).await,
+        "first token should be valid after first login"
+    );
     let t2 = mgr.login("user_1").await.expect("second login");
-    assert!(!mgr.is_valid(&t1).await, "old token should be invalid after non-concurrent re-login");
-    assert!(mgr.is_valid(&t2).await, "new token should be valid after non-concurrent re-login");
+    assert!(
+        !mgr.is_valid(&t1).await,
+        "old token should be invalid after non-concurrent re-login"
+    );
+    assert!(
+        mgr.is_valid(&t2).await,
+        "new token should be valid after non-concurrent re-login"
+    );
 }
 
 #[tokio::test]
@@ -97,7 +125,11 @@ async fn test_login_by_device_creates_separate_session() {
         .login_with_options("user_1", None, Some("mobile".into()), None, None, None)
         .await
         .expect("mobile login");
-    assert_ne!(t_web.as_str(), t_mobile.as_str(), "different devices → different tokens");
+    assert_ne!(
+        t_web.as_str(),
+        t_mobile.as_str(),
+        "different devices → different tokens"
+    );
 }
 
 #[tokio::test]
@@ -180,7 +212,9 @@ async fn test_stp_util_login_works() {
 async fn test_stp_util_logout_by_token_works() {
     init();
     let token = StpUtil::login("user_stp_2").await.expect("login");
-    StpUtil::logout_by_token(&token).await.expect("logout_by_token");
+    StpUtil::logout_by_token(&token)
+        .await
+        .expect("logout_by_token");
     assert!(!StpUtil::is_login(&token).await);
 }
 
@@ -231,7 +265,11 @@ async fn test_get_token_info_expired_token() {
     let token = mgr.login("user_expires").await.expect("login");
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     let result = mgr.get_token_info(&token).await;
-    assert!(result.is_err(), "expired token should return error, got {:?}", result);
+    assert!(
+        result.is_err(),
+        "expired token should return error, got {:?}",
+        result
+    );
 }
 
 #[tokio::test]

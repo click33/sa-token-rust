@@ -13,7 +13,7 @@ Redis storage implementation for sa-token-rust.
 
 ```toml
 [dependencies]
-sa-token-storage-redis = "0.1.13"
+sa-token-storage-redis = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 ```
 

@@ -1,30 +1,24 @@
 # sa-token-storage-database
-（The functionality is not yet complete.）
-Database storage implementation for sa-token-rust (Coming Soon).
+
+Database storage implementation for sa-token-rust (0.2.0).
 
 ## Status
 
-🚧 **Under Development**
+Basic KV (`get` / `set` / `delete` / …) is available. Advanced ops are **Unsupported** in this release:
 
-This package will provide database storage implementation for:
-- PostgreSQL
-- MySQL
-- SQLite
+- `get_del` / CAS / `set_if_absent`
+- `list_push` / `list_remove` / list helpers
+- `scan`
 
-## Planned Features
+Do not use this backend for nonce one-shot consume, online indexes, or multi-device lists until a later storage plan. See [MIGRATION_0.2.md](../MIGRATION_0.2.md) §5.
 
-- 📊 **SQL Database Support**: Multiple database backends
-- 🔄 **Connection Pooling**: Efficient database connections
-- 🎯 **Production Ready**: Durable storage with ACID properties
+## Install
 
-## Stay Tuned
-
-Follow the [main repository](https://github.com/llc-993/sa-token-rust) for updates.
-
-## Author
-
-**金书记**
+```toml
+[dependencies]
+sa-token-storage-database = "0.2.0"
+```
 
 ## License
 
-Licensed under either of Apache-2.0 or MIT.
+MIT OR Apache-2.0

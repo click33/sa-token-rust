@@ -2,6 +2,8 @@
 //!
 //! - **`v079`** (default | 默认): `sa-token-plugin-salvo-v079` — Salvo **0.79.x**.
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(not(feature = "v079"))]
 compile_error!("sa-token-plugin-salvo: enable `v079` (default).");
 

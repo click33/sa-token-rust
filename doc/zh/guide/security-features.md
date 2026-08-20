@@ -1,138 +1,134 @@
 # 安全特性
 
-[English](/guide/security-features.md) | 中文文档
+[English](/guide/security-features.md) | 中文
 
-sa-token-rust 提供内置的安全机制，防范常见的攻击手段。
+Nonce、Refresh、二级认证（Safe）、封禁（Disable）、Same-Token、请求签名（Sign）、临时令牌（TempToken）、HTTP Basic，以及对应过程宏。
 
-## Nonce 防重放攻击
+## Nonce（防重放）
 
-Nonce 是一次性使用的随机值，可防止重放攻击。每个 nonce 只能验证和消费一次。
+配置开启后，登录可绑定一次性 nonce：
+
+```rust
+SaTokenConfig::builder()
+    .enable_nonce(true)
+    .nonce_timeout(60)
+    // ...
+```
 
 ```rust
 use sa_token_core::NonceManager;
 
-let nonce_manager = NonceManager::new(storage, 300); // 5 分钟有效期
+let nonce_mgr = NonceManager::from_dao(manager.dao().clone(), 60);
+let nonce = nonce_mgr.generate();
+nonce_mgr.store(&nonce, "user_1").await?;
+nonce_mgr.validate_and_consume(&nonce, "user_1").await?;
 
-// 生成 nonce
-let nonce = nonce_manager.generate();
-
-// 验证并消费（单次使用）
-nonce_manager.validate_and_consume(&nonce, "user_123").await?;
-
-// 第二次使用将失败（检测到重放攻击）
-match nonce_manager.validate_and_consume(&nonce, "user_123").await {
-    Err(_) => println!("重放攻击已阻止！"),
-    _ => {}
-}
+// 或登录时带上
+StpUtil::builder("user_1").nonce(nonce).login(None::<String>).await?;
 ```
 
-### 工作原理
+## Refresh Token
 
-1. 服务器生成唯一的 nonce 值并发送给客户端
-2. 客户端在请求中包含此 nonce
-3. 服务器验证 nonce 并将其标记为"已消费"
-4. 任何使用相同 nonce 的后续请求都将被拒绝
-
-这确保了即使攻击者捕获了有效的请求，也无法重放它，因为 nonce 已被使用。
-
-### 配置
-
-- **TTL（有效期）**：控制 nonce 在过期前保持有效的时间。默认：300 秒（5 分钟）。
-- **存储**：Nonce 存储在配置的存储后端中（内存、Redis 或数据库）。
-
----
-
-## 自动续签（auto_renew）
-
-启用后，每次访问时 Token 自动续签。通过 `SaTokenConfig` 配置：
+开启后由登录流水线发放 refresh；刷新时 **同步更新** token 体、反向映射、`login:token` 与多设备索引，并删除旧 access。
 
 ```rust
-let config = SaTokenConfig::builder()
-    .auto_renew(true)           // 启用自动续签
-    .active_timeout(1800)       // 续签时长（> 0 时使用）
-    .timeout(86400)             // 否则回退使用
-    .build_config();
-
-// Token 自动续签发生在：
-// - get_token_info() 调用时
-// - 中间件 token 验证时
-// - 无参数的 StpUtil 方法调用时
+SaTokenConfig::builder()
+    .enable_refresh_token(true)
+    .refresh_token_timeout(2_592_000)
+    // ...
 ```
-
-**行为**：如果 `active_timeout > 0`，每次访问 Token 续签 `active_timeout` 秒。否则使用 `timeout` 作为续签时长。
-
----
-
-## Refresh Token 刷新机制
-
-Refresh Token 允许客户端获取新的访问令牌，而无需用户重新认证。
 
 ```rust
 use sa_token_core::RefreshTokenManager;
 
-let refresh_manager = RefreshTokenManager::new(storage, config);
-
-// 生成 refresh token
-let refresh_token = refresh_manager.generate("user_123");
-refresh_manager.store(&refresh_token, &access_token, "user_123").await?;
-
-// 访问令牌过期时刷新
-let (new_access_token, user_id) = refresh_manager
-    .refresh_access_token(&refresh_token)
-    .await?;
+let refresh = RefreshTokenManager::from_dao(manager.dao().clone());
+// 或 from_storage(storage, config) / 由登录写入后取出 refresh 串
+let (new_access, login_id) = refresh.refresh_access_token(&refresh_token).await?;
 ```
 
-### Token 生命周期
+也可 `revoke_all_for_user(login_type, login_id)`。
 
-```
-用户登录
-    │
-    ├──► 访问令牌（短期有效，如 2 小时）
-    │
-    └──► 刷新令牌（长期有效，如 30 天）
-              │
-              │  访问令牌过期
-              │
-              └──► 使用刷新令牌获取新的访问令牌
-                        │
-                        │  刷新令牌过期或被撤销
-                        │
-                        └──► 用户必须重新认证
+## Safe（二级认证）
+
+敏感操作前开启短时安全窗口：
+
+```rust
+StpUtil::open_safe("transfer", 300).await?; // 秒；当前请求 token
+StpUtil::check_safe("transfer").await?;
 ```
 
-### 安全注意事项
+宏：`#[sa_check_safe("transfer")]`。
 
-- **访问令牌**应为短期有效（数分钟到数小时）
-- **刷新令牌**应为长期有效但可撤销（数天到数周）
-- 始终安全存储刷新令牌
-- 每次使用时轮换刷新令牌以增强安全性
-- 实现刷新令牌轮换以检测令牌被盗
+## Disable（账号封禁）
 
----
-
-## 最佳实践
-
-### Token 安全
-
-1. **使用 HTTPS**：生产环境始终使用 TLS 保护传输中的令牌
-2. **设置适当的超时时间**：在安全性和用户体验之间取得平衡
-3. **定期轮换密钥**：定期轮换 JWT 签名密钥和其他机密
-4. **验证所有输入**：永远不要信任未经验证的客户端提供的令牌
-
-### 存储安全
-
-1. **Redis**：生产环境中为 Redis 连接使用密码认证和 TLS
-2. **Memory**：仅将内存存储用于开发和测试
-3. **Database**：为过期的令牌实现适当的索引和清理机制
-
-### 纵深防御
-
-- 组合多种安全特性：Nonce + Refresh Token + 权限检查
-- 使用事件监听器记录安全相关事件（登录、登出、踢出下线）
-- 监控可疑模式（快速登录失败、令牌重用尝试）
-
-## 运行安全示例
-
-```bash
-cargo run --example security_features_example
+```rust
+StpUtil::disable("user_1", 86400).await?;           // 默认服务
+StpUtil::disable_level("user_1", "comment", 2, 3600).await?;
+StpUtil::check_disable("user_1").await?;
+StpUtil::untie_disable("user_1", "").await?;
 ```
+
+宏：`#[sa_check_disable]` / 带服务与等级参数（见宏文档）。
+
+## Same-Token
+
+集群内 / 网关到服务的共享口令。默认请求头 `SA-SAME-TOKEN`；当前值与上一值（宽限）均有效。
+
+```rust
+let t = StpUtil::get_same_token().await?;
+StpUtil::check_same_token(&t).await?;
+let t2 = StpUtil::refresh_same_token().await?;
+```
+
+宏：`#[sa_check_same_token]`（读当前请求头并校验）。
+
+## Sign（请求签名）
+
+配置 `sign_secret_key`（及可选 `sign_window_secs`）后：
+
+```rust
+use std::collections::BTreeMap;
+
+let mut params = BTreeMap::new();
+params.insert("userId".into(), "42".into());
+let signed = StpUtil::sign_params(params).await?; // 含 timestamp / nonce / sign
+StpUtil::check_sign(&signed).await?;
+```
+
+底层类型：`RequestSign`（可 `with_dao` 做 nonce 去重）。
+
+## TempToken
+
+短时业务令牌（默认命名空间）：
+
+```rust
+let t = StpUtil::create_temp_token("reset:user_1", 300).await?;
+let record = StpUtil::parse_temp_token(&t).await?;
+StpUtil::delete_temp_token(&t).await?;
+```
+
+或 `TempTokenManager::new(dao)` 指定 namespace。
+
+## HTTP Basic
+
+```rust
+use sa_token_core::http_basic;
+
+http_basic::check("sa-token", "admin:secret")?; // Authorization: Basic ...
+```
+
+宏：
+
+```rust
+#[sa_check_http_basic("admin:secret")]
+async fn admin_only() { /* ... */ }
+
+#[sa_check_http_basic(account = "admin:secret", realm = "sa-token")]
+async fn with_realm() { /* ... */ }
+```
+
+## 相关链接
+
+- [JWT](/zh/guide/jwt.md)
+- [StpUtil](/zh/guide/stp-util.md)
+- [错误参考](/zh/reference/error-reference.md)

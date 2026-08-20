@@ -47,11 +47,7 @@ async fn kickout_marks_token_as_kicked_out() {
 
 #[tokio::test]
 async fn replaced_marks_old_token_on_non_concurrent_login() {
-    let mgr = mgr_with_config(
-        SaTokenConfig::builder()
-            .is_concurrent(false)
-            .build_config(),
-    );
+    let mgr = mgr_with_config(SaTokenConfig::builder().is_concurrent(false).build_config());
     let t1 = mgr.login("u_rep").await.unwrap();
     let _t2 = mgr.login("u_rep").await.unwrap();
     assert!(matches!(
@@ -62,11 +58,8 @@ async fn replaced_marks_old_token_on_non_concurrent_login() {
 
 #[tokio::test]
 async fn stp_interface_provides_permissions() {
-    let mgr = SaTokenManager::new(
-        Arc::new(MemoryStorage::new()),
-        SaTokenConfig::default(),
-    )
-    .with_stp_interface(Arc::new(MockStpInterface));
+    let mgr = SaTokenManager::new(Arc::new(MemoryStorage::new()), SaTokenConfig::default())
+        .with_stp_interface(Arc::new(MockStpInterface));
     let perms = mgr.get_permissions("any").await.unwrap();
     assert!(perms.contains(&"from:interface".to_string()));
 }
@@ -75,11 +68,10 @@ async fn stp_interface_provides_permissions() {
 async fn switch_to_overrides_login_id_in_context() {
     let mgr = mgr_with_config(SaTokenConfig::default());
     let token = mgr.login("real_user").await.unwrap();
-    let ctx = sa_token_core::SaTokenContext {
-        token: Some(token.clone()),
-        login_id: Some("real_user".to_string()),
-        ..Default::default()
-    };
+    let ctx = sa_token_core::SaTokenContext::builder()
+        .token(token.clone())
+        .login_id("real_user")
+        .build();
     sa_token_core::SaTokenContext::set_current(ctx);
     StpUtil::switch_to("temp_user");
     assert_eq!(

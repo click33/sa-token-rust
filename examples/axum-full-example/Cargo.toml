@@ -2,6 +2,7 @@
 name = "axum-full-example"
 version = "0.1.0"
 edition = "2021"
+publish = false
 
 [dependencies]
 # sa-token 插件（包含所有依赖）
@@ -23,3 +24,13 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # 其他
 anyhow = "1.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+

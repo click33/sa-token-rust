@@ -3,7 +3,7 @@
 //! Axum request/response adapters (`http` 1.x, shared across axum 0.7+).
 
 use http::{Request, Response};
-use sa_token_adapter::context::{SaRequest, SaResponse, CookieOptions};
+use sa_token_adapter::context::{CookieOptions, SaRequest, SaResponse};
 use sa_token_adapter::utils::{parse_cookies, parse_query_string};
 use serde::Serialize;
 
@@ -118,9 +118,12 @@ impl<T> AxumResponseAdapter<T> {
 impl<T> SaResponse for AxumResponseAdapter<T> {
     fn set_header(&mut self, name: &str, value: &str) {
         if let Ok(header_name) = http::header::HeaderName::from_bytes(name.as_bytes())
-            && let Ok(header_value) = http::header::HeaderValue::from_str(value) {
-                self.response.headers_mut().insert(header_name, header_value);
-            }
+            && let Ok(header_value) = http::header::HeaderValue::from_str(value)
+        {
+            self.response
+                .headers_mut()
+                .insert(header_name, header_value);
+        }
     }
 
     fn set_cookie(&mut self, name: &str, value: &str, options: CookieOptions) {

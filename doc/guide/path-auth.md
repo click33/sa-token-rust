@@ -1,255 +1,115 @@
-# Path-Based Authentication Guide
+# Path auth
 
-[中文](/zh/guide/path-auth.md) | English
+English | [中文](/zh/guide/path-auth.md)
 
----
+HTTP / gRPC middleware uses `PathAuthConfig` to decide which paths require login. Allow anonymous routes with `exclude` — **do not** rely on `#[sa_ignore]` (it only skips macro checks).
 
-## Overview
+## When to use
 
-Path-based authentication allows you to configure which routes require authentication and which are excluded, providing fine-grained control over access without modifying individual route handlers.
+- Default auth for the whole app, with a few public paths (`/login`, `/health`).
+- Split duties: middleware answers “logged in?”, macros answer “has permission / role?”.
 
-## Table of Contents
-
-- [Quick Start](#quick-start)
-- [Configuration](#configuration)
-- [Pattern Matching](#pattern-matching)
-- [Examples](#examples)
-- [Framework Integration](#framework-integration)
-
-## Quick Start
-
-**Dependencies (0.1.14):** use **`sa-token-plugin-actix-web`** with default **`v4`** + **`memory`** for Actix-web (see [Quick Start](./quick-start.md)).
-
-### Basic Usage
+## PathAuthConfig
 
 ```rust
 use sa_token_core::router::PathAuthConfig;
-use sa_token_plugin_actix_web::{SaTokenMiddleware, SaTokenState, MemoryStorage};
-use std::sync::Arc;
+
+let config = PathAuthConfig::new()
+    .include(vec!["/**".into()])           // paths that require auth (Ant-style)
+    .exclude(vec![
+        "/api/login".into(),
+        "/health".into(),
+        "/public/**".into(),
+    ])
+    .validator(|login_id| {                 // optional extra login_id check
+        !login_id.is_empty()
+    });
+```
+
+Rule: `need_auth = matches include AND does not match exclude`.
+
+| Pattern | Meaning |
+|---------|---------|
+| `/**` | All paths |
+| `/api/**` | Prefix `/api` |
+| `/api/*` | One segment under `/api` (`/api/user` yes, `/api/a/b` no) |
+| `*.html` | Ends with `.html` |
+| `/exact` | Exact match |
+
+## run_auth_flow
+
+Framework layers share one pipeline:
+
+```text
+extract_token_from(req, config)
+  → process_auth(path, token, PathAuthConfig?, manager)
+  → create_context → AuthFlowResult
+```
+
+```rust
+use sa_token_core::router::run_auth_flow;
+
+// Some(config): include/exclude may produce 401
+// None: validate token if present; never reject by path
+let flow = run_auth_flow(&adapter, &manager, Some(&config)).await;
+if flow.should_reject() {
+    // binding returns 401
+}
+```
+
+`AuthFlowResult::run(fut)` runs the handler inside `SaTokenContext::scope` so `StpUtil` parameterless APIs work.
+
+## Layer: `with_path_auth` vs macros
+
+**Axum:**
+
+```rust
+use sa_token_plugin_axum::{SaTokenLayer, SaTokenState};
+use sa_token_core::PathAuthConfig;
 
 let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
+    .storage(storage)
     .build();
 
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string(), "/api/health".to_string()]);
+let path = PathAuthConfig::new()
+    .include(vec!["/**".into()])
+    .exclude(vec!["/api/login".into()]);
 
-App::new()
-    .wrap(SaTokenMiddleware::with_path_auth(state, config))
+let app = axum::Router::new()
+    .route("/api/login", /* ... */)
+    .route("/api/user", /* ... */)
+    .layer(SaTokenLayer::with_path_auth(state.clone(), path));
 ```
 
-## Configuration
-
-### PathAuthConfig
-
-The `PathAuthConfig` struct provides a builder pattern for configuring path authentication:
+**Actix:**
 
 ```rust
-let config = PathAuthConfig::new()
-    .include(vec![
-        "/api/**".to_string(),
-        "/admin/**".to_string(),
-    ])
-    .exclude(vec![
-        "/api/public/**".to_string(),
-        "/api/login".to_string(),
-    ])
-    .validator(|login_id| {
-        // Custom validation logic
-        login_id.starts_with("user_")
-    });
+use sa_token_plugin_actix_web::{PathAuthConfig, SaTokenMiddleware};
+
+App::new().wrap(SaTokenMiddleware::with_path_auth(
+    state.clone(),
+    PathAuthConfig::new()
+        .include(vec!["/**".into()])
+        .exclude(vec!["/api/login".into()]),
+))
 ```
 
-### Methods
+| Mechanism | Does | Does not |
+|-----------|------|----------|
+| `SaTokenLayer::with_path_auth` / `SaTokenMiddleware::with_path_auth` | Path-level login gate; fills context | Check permission strings |
+| `#[sa_check_login]` / `#[sa_check_permission]` | Fine-grained checks in the handler | Bypass middleware |
+| `#[sa_ignore]` | Skip inserting macro checks | Skip the Layer |
 
-- `include(patterns)`: Set paths that require authentication
-- `exclude(patterns)`: Set paths excluded from authentication
-- `validator(fn)`: Set custom login ID validator function
+`SaTokenLayer::new(state)` without path config only validates a present token and fills context — anonymous requests pass. Use that when routes protect themselves with macros.
 
-## Pattern Matching
+## Pitfalls
 
-### Supported Patterns
+1. Forgetting to `exclude` login → clients always get 401.
+2. Only `#[sa_ignore]` without `exclude` → middleware still rejects.
+3. Empty `include` → no path ever `need_auth` (path enforcement off).
 
-| Pattern | Description | Example |
-|---------|-------------|---------|
-| `/**` | Match all paths | Matches everything |
-| `/api/**` | Multi-level prefix match | Matches `/api/user`, `/api/user/profile` |
-| `/api/*` | Single-level prefix match | Matches `/api/user`, not `/api/user/profile` |
-| `*.html` | Suffix match | Matches `/page.html` |
-| `/exact` | Exact match | Only matches `/exact` |
+## Related
 
-### Matching Rules
-
-1. Include patterns are checked first - if path matches, authentication is required
-2. Exclude patterns override include patterns - if path matches exclude, authentication is not required
-3. If no include patterns are set, no paths require authentication
-4. If path matches neither include nor exclude, authentication is not required
-
-## Examples
-
-### Example 1: Protect API Routes
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-// /api/user -> requires auth
-// /api/public/info -> no auth required
-// /web/page -> no auth required
-```
-
-### Example 2: Multiple Include Patterns
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec![
-        "/api/**".to_string(),
-        "/admin/**".to_string(),
-    ])
-    .exclude(vec![
-        "/api/login".to_string(),
-        "/api/register".to_string(),
-    ]);
-```
-
-### Example 3: Custom Validator
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .validator(|login_id| {
-        // Only allow login IDs starting with "user_"
-        login_id.starts_with("user_")
-    });
-```
-
-## Framework Integration
-
-Built-in **`with_path_auth`** examples follow for Actix-web, Axum, Poem, Salvo, Ntex, and Tide. Rocket, Gotham, and Warp provide global auth layers first — combine **`PathAuthConfig`** in handlers or macros when you need path rules ([full guide](https://github.com/sa-tokens/sa-token-rust/blob/main/docs/PATH_AUTH_GUIDE.md)).
-
-### Actix-web
-
-```rust
-use sa_token_plugin_actix_web::{SaTokenMiddleware, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-App::new()
-    .wrap(SaTokenMiddleware::with_path_auth(state, config))
-```
-
-### Axum
-
-```rust
-use sa_token_plugin_axum::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Router::new()
-    .layer(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Poem
-
-```rust
-use sa_token_plugin_poem::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Route::new()
-    .with(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Salvo
-
-```rust
-use sa_token_plugin_salvo::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Router::new()
-    .hoop(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Ntex
-
-```rust
-use sa_token_plugin_ntex::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-App::new()
-    .wrap(SaTokenLayer::with_path_auth(state, config))
-    // ...routes
-```
-
-### Tide
-
-```rust
-use sa_token_plugin_tide::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-app.with(SaTokenLayer::with_path_auth(state, config))
-```
-
-## Best Practices
-
-1. **Use specific patterns**: Prefer `/api/user/*` over `/api/**` when possible
-2. **Exclude public routes**: Always exclude login, register, and public API routes
-3. **Test patterns**: Verify your patterns match expected paths
-4. **Use validators**: Add custom validation for additional security
-5. **Document patterns**: Keep a list of protected and public routes
-
-## API Reference
-
-### PathAuthConfig
-
-```rust
-impl PathAuthConfig {
-    pub fn new() -> Self;
-    pub fn include(self, patterns: Vec<String>) -> Self;
-    pub fn exclude(self, patterns: Vec<String>) -> Self;
-    pub fn validator<F>(self, f: F) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static;
-    pub fn check(&self, path: &str) -> bool;
-    pub fn validate_login_id(&self, login_id: &str) -> bool;
-}
-```
-
-### Helper Functions
-
-```rust
-pub fn match_path(path: &str, pattern: &str) -> bool;
-pub fn match_any(path: &str, patterns: &[&str]) -> bool;
-pub fn need_auth(path: &str, include: &[&str], exclude: &[&str]) -> bool;
-pub fn extract_token<R: SaRequest>(req: &R, token_name: &str) -> Option<String>;
-pub async fn run_auth_flow<R: SaRequest>(req: &R, manager: &SaTokenManager, config: Option<&PathAuthConfig>) -> AuthFlowResult;
-```
-
-### AuthFlowResult
-
-```rust
-impl AuthFlowResult {
-    // true if binding should respond 401 (path requires auth, token missing/invalid)
-    pub fn should_reject(&self) -> bool;
-    // Run future with this flow's SaTokenContext (await-safe)
-    pub async fn run<F, R>(self, fut: F) -> R;
-}
-```
-
+- [StpUtil](./stp-util.md)
+- [Permissions and macros](./permission-matching.md)
+- [Framework integration](./framework-integration.md)

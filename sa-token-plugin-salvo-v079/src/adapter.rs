@@ -3,8 +3,8 @@
 // 中文 | English
 // Salvo 请求/响应适配器 | Salvo request/response adapter
 
+use sa_token_adapter::{CookieOptions, SaRequest, SaResponse, build_cookie_string};
 use salvo::prelude::*;
-use sa_token_adapter::{SaRequest, SaResponse, CookieOptions, build_cookie_string};
 use serde::Serialize;
 
 /// 中文 | English
@@ -29,31 +29,32 @@ impl<'a> SaRequest for SalvoRequestAdapter<'a> {
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
     }
-    
+
     fn get_cookie(&self, name: &str) -> Option<String> {
         // 先尝试使用 cookie 方法 | First try using cookie method
         if let Some(cookie) = self.request.cookie(name) {
             return Some(cookie.value().to_string());
         }
-        
+
         // 如果没有找到，手动解析 Cookie 头 | If not found, manually parse Cookie header
         if let Some(cookie_header) = self.request.headers().get("cookie")
-            && let Ok(cookie_str) = cookie_header.to_str() {
-                let cookies = sa_token_adapter::utils::parse_cookies(cookie_str);
-                if let Some(value) = cookies.get(name) {
-                    return Some(value.to_string());
-                }
+            && let Ok(cookie_str) = cookie_header.to_str()
+        {
+            let cookies = sa_token_adapter::utils::parse_cookies(cookie_str);
+            if let Some(value) = cookies.get(name) {
+                return Some(value.to_string());
             }
-        
+        }
+
         None
     }
-    
+
     fn get_param(&self, name: &str) -> Option<String> {
         // 先尝试使用 query 方法 | First try using query method
         if let Some(value) = self.request.query::<String>(name) {
             return Some(value);
         }
-        
+
         // 如果没有找到，手动解析查询字符串 | If not found, manually parse query string
         if let Some(query) = self.request.uri().query() {
             let params = sa_token_adapter::utils::parse_query_string(query);
@@ -61,14 +62,14 @@ impl<'a> SaRequest for SalvoRequestAdapter<'a> {
                 return Some(value.to_string());
             }
         }
-        
+
         None
     }
-    
+
     fn get_path(&self) -> String {
         self.request.uri().path().to_string()
     }
-    
+
     fn get_method(&self) -> String {
         self.request.method().to_string()
     }
@@ -113,24 +114,25 @@ impl SalvoCapturedRequest {
             None
         };
 
-        let cookie_token = req.cookie(token_name).map(|c| c.value().to_string()).or_else(|| {
-            req.headers()
-                .get("cookie")
-                .and_then(|h| h.to_str().ok())
-                .and_then(|cookie_str| {
-                    let cookies = sa_token_adapter::utils::parse_cookies(cookie_str);
-                    cookies.get(token_name).map(|s| (*s).to_string())
-                })
-        });
-
-        let query_token = req
-            .query::<String>(token_name)
+        let cookie_token = req
+            .cookie(token_name)
+            .map(|c| c.value().to_string())
             .or_else(|| {
-                req.uri().query().and_then(|q| {
-                    let params = sa_token_adapter::utils::parse_query_string(q);
-                    params.get(token_name).cloned()
-                })
+                req.headers()
+                    .get("cookie")
+                    .and_then(|h| h.to_str().ok())
+                    .and_then(|cookie_str| {
+                        let cookies = sa_token_adapter::utils::parse_cookies(cookie_str);
+                        cookies.get(token_name).map(|s| (*s).to_string())
+                    })
             });
+
+        let query_token = req.query::<String>(token_name).or_else(|| {
+            req.uri().query().and_then(|q| {
+                let params = sa_token_adapter::utils::parse_query_string(q);
+                params.get(token_name).cloned()
+            })
+        });
 
         Self {
             token_name: token_name.to_string(),
@@ -204,22 +206,25 @@ impl<'a> SalvoResponseAdapter<'a> {
 impl<'a> SaResponse for SalvoResponseAdapter<'a> {
     fn set_header(&mut self, name: &str, value: &str) {
         if let Ok(header_name) = http::header::HeaderName::from_bytes(name.as_bytes())
-            && let Ok(header_value) = http::header::HeaderValue::from_str(value) {
-                self.response.headers_mut().insert(header_name, header_value);
-            }
+            && let Ok(header_value) = http::header::HeaderValue::from_str(value)
+        {
+            self.response
+                .headers_mut()
+                .insert(header_name, header_value);
+        }
     }
-    
+
     fn set_cookie(&mut self, name: &str, value: &str, options: CookieOptions) {
         let cookie_string = build_cookie_string(name, value, options);
         self.set_header("Set-Cookie", &cookie_string);
     }
-    
+
     fn set_status(&mut self, status: u16) {
-        if let Ok(status_code) = http::StatusCode::from_u16(status) {
+        if let Ok(status_code) = StatusCode::from_u16(status) {
             self.response.status_code(status_code);
         }
     }
-    
+
     fn set_json_body<U: Serialize>(&mut self, body: U) -> Result<(), serde_json::Error> {
         match serde_json::to_string(&body) {
             Ok(json) => {
@@ -230,4 +235,3 @@ impl<'a> SaResponse for SalvoResponseAdapter<'a> {
         }
     }
 }
-

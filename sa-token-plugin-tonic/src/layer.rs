@@ -12,13 +12,13 @@ use std::task::{Context, Poll};
 
 use http::{Request, Response, StatusCode};
 use http_body::Body;
-use sa_token_core::router::{run_auth_flow, PathAuthConfig};
+use sa_token_core::router::{PathAuthConfig, run_auth_flow};
 use tower::{Layer, Service};
 
 use crate::adapter::TonicCapturedRequest;
-use sa_token_adapter::SaRequest;
 use crate::error::{SaTokenBearerToken, SaTokenGrpcPath, SaTokenLoginId};
-use crate::state::SaTokenState;
+use sa_token_adapter::SaRequest;
+use sa_token_plugin_common::SaTokenState;
 
 // ============================================================================
 // 中文: Tower Layer

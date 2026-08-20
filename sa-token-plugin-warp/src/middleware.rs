@@ -1,83 +1,92 @@
 // Author: 金书记
 //
-// 中文 | English
-// Warp 中间件 | Warp middleware
+// Warp middleware convenience filters delegating to layer.rs guards.
 
-use warp_03::{Filter, Reply, reply};
-use crate::state::SaTokenState;
+use sa_token_plugin_common::SaTokenState;
+use warp_03::{Filter, Rejection};
 
-/// 中文 | English
-/// 创建登录检查中间件 | Create login check middleware
-///
-/// 这个中间件会检查用户是否已登录，如果未登录则返回401错误 | This middleware checks if user is logged in, and returns 401 error if not
-pub fn with_auth(_state: SaTokenState) -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    warp_03::any().map(|| {
-        reply::reply()
-    })
+use crate::layer::{sa_check_login, sa_check_permission, sa_check_role};
+
+/// Login-check filter: rejects unauthenticated requests with 401.
+pub fn with_auth(state: SaTokenState) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    sa_check_login(state)
 }
 
-/// 中文 | English
-/// 创建权限检查过滤器 | Create permission check filter
-///
-/// 这个过滤器会检查用户是否拥有指定权限，如果没有则返回403错误 | This filter checks if user has specified permission, and returns 403 error if not
-pub fn require_auth() -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    warp_03::any().map(|| {
-        reply::reply()
-    })
+/// Login-check filter (alias without state — uses global StpUtil, **still
+/// needs `sa_token_filter`** earlier in the chain to populate `TokenData`).
+pub fn require_auth() -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    warp_03::any()
+        .and(warp_03::filters::ext::get::<crate::filter::TokenData>())
+        .and_then(|data: crate::filter::TokenData| async move {
+            if data.flow.should_reject() || data.flow.login_id.is_none() {
+                Err(warp_03::reject::custom(crate::extractor::AuthError))
+            } else {
+                Ok(())
+            }
+        })
+        .untuple_one()
 }
 
-/// 中文 | English
-/// 创建权限检查过滤器 | Create permission check filter
-///
-/// 这个过滤器会检查用户是否拥有指定权限，如果没有则返回403错误 | This filter checks if user has specified permission, and returns 403 error if not
-pub fn require_permission(
-    permission: impl Into<String> + Send + Sync + 'static,
-) -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    let _permission = permission.into();
-    warp_03::any().map(|| {
-        reply::reply()
-    })
-}
-
-/// 中文 | English
-/// 创建角色检查过滤器 | Create role check filter
-///
-/// 这个过滤器会检查用户是否拥有指定角色，如果没有则返回403错误 | This filter checks if user has specified role, and returns 403 error if not
-pub fn require_role(
-    role: impl Into<String> + Send + Sync + 'static,
-) -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    let _role = role.into();
-    warp_03::any().map(|| {
-        reply::reply()
-    })
-}
-
-/// 中文 | English
-/// 创建权限检查中间件 | Create permission check middleware
-///
-/// 这个中间件会检查用户是否拥有指定权限，如果没有则返回403错误 | This middleware checks if user has specified permission, and returns 403 error if not
+/// Permission-check filter: requires login + specific permission.
 pub fn with_permission(
     state: SaTokenState,
     permission: impl Into<String> + Send + Sync + 'static,
-) -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    let _permission = permission.into();
-    warp_03::any().map(move || {
-        let _state = state.clone();
-        reply::reply()
-    })
+) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    sa_check_permission(state, permission)
 }
 
-/// 中文 | English
-/// 创建角色检查中间件 | Create role check middleware
-///
-/// 这个中间件会检查用户是否拥有指定角色，如果没有则返回403错误 | This middleware checks if user has specified role, and returns 403 error if not
+/// Permission-check filter without state (requires TokenData in extensions).
+pub fn require_permission(
+    permission: impl Into<String> + Send + Sync + 'static,
+) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    let perm = permission.into();
+    warp_03::any()
+        .and(warp_03::filters::ext::get::<crate::filter::TokenData>())
+        .and_then(move |data: crate::filter::TokenData| {
+            let p = perm.clone();
+            async move {
+                let login_id = data
+                    .flow
+                    .login_id
+                    .as_deref()
+                    .ok_or_else(|| warp_03::reject::custom(crate::extractor::AuthError))?;
+                sa_token_core::StpUtil::check_permission(login_id, &p)
+                    .await
+                    .map_err(|_| warp_03::reject::custom(crate::extractor::PermissionError))?;
+                Ok::<(), Rejection>(())
+            }
+        })
+        .untuple_one()
+}
+
+/// Role-check filter: requires login + specific role.
 pub fn with_role(
     state: SaTokenState,
     role: impl Into<String> + Send + Sync + 'static,
-) -> impl Filter<Extract = impl Reply, Error = std::convert::Infallible> + Clone {
-    let _role = role.into();
-    warp_03::any().map(move || {
-        let _state = state.clone();
-        reply::reply()
-    })
+) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    sa_check_role(state, role)
+}
+
+/// Role-check filter without state (requires TokenData in extensions).
+pub fn require_role(
+    role: impl Into<String> + Send + Sync + 'static,
+) -> impl Filter<Extract = (), Error = Rejection> + Clone {
+    let r = role.into();
+    warp_03::any()
+        .and(warp_03::filters::ext::get::<crate::filter::TokenData>())
+        .and_then(move |data: crate::filter::TokenData| {
+            let r2 = r.clone();
+            async move {
+                let login_id = data
+                    .flow
+                    .login_id
+                    .as_deref()
+                    .ok_or_else(|| warp_03::reject::custom(crate::extractor::AuthError))?;
+                sa_token_core::StpUtil::check_role(login_id, &r2)
+                    .await
+                    .map_err(|_| warp_03::reject::custom(crate::extractor::RoleError))?;
+                Ok::<(), Rejection>(())
+            }
+        })
+        .untuple_one()
 }

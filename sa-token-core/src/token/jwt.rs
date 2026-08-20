@@ -2,12 +2,13 @@
 //
 //! JWT (JSON Web Token) Module | JWT (JSON Web Token) 模块
 //!
-//! ## 模式说明（对齐 Java StpLogicJwt）
+//! ## Mode notes | 模式说明
 //!
 //! 当前 Rust 实现为 **Simple 风格**：`token` 本身是 JWT，但 Session / 权限等仍走 [`SaStorage`]。
 //! Stateless（无状态 Session）与 Mixin（混合映射）模式尚未全量移植；logout 仍会清理 storage 中的 token 映射。
 //!
-//! JWT 生成失败时见 [`SaTokenConfig::jwt_fallback_on_error`]：默认回退 UUID 并 `tracing::warn`，可关闭回退以快速失败。
+//! JWT 生成失败时见 [`SaTokenConfig::jwt_fallback_on_error`]：默认 `false`（失败返回 `ConfigError`）；为 `true` 时回退 UUID 并 `tracing::warn`。
+//! On JWT generation failure see [`SaTokenConfig::jwt_fallback_on_error`]: default `false` (returns `ConfigError`); when `true`, falls back to UUID with `tracing::warn`.
 //!
 //! Provides complete JWT functionality including generation, validation, and parsing.
 //! 提供完整的 JWT 功能，包括生成、验证和解析。
@@ -39,9 +40,7 @@
 //! ```
 
 use chrono::{DateTime, Duration, Utc};
-use jsonwebtoken::{
-    decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation,
-};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -49,8 +48,7 @@ use std::collections::HashMap;
 use crate::error::{SaTokenError, SaTokenResult};
 
 /// JWT Algorithm | JWT 算法
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum JwtAlgorithm {
     /// HMAC using SHA-256 | 使用 SHA-256 的 HMAC
     #[default]
@@ -70,7 +68,6 @@ pub enum JwtAlgorithm {
     /// ECDSA using SHA-384 | 使用 SHA-384 的 ECDSA
     ES384,
 }
-
 
 impl From<JwtAlgorithm> for Algorithm {
     fn from(alg: JwtAlgorithm) -> Self {
@@ -122,7 +119,6 @@ pub struct JwtClaims {
     pub jti: Option<String>,
 
     // Sa-token extensions | Sa-token 扩展字段
-
     /// Login type (user, admin, etc.) | 登录类型（用户、管理员等）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub login_type: Option<String>,
@@ -216,13 +212,13 @@ impl JwtClaims {
     pub fn get_claim(&self, key: &str) -> Option<&Value> {
         self.extra.get(key)
     }
-    
+
     /// Set all custom claims at once | 一次设置所有自定义声明
     pub fn set_claims(&mut self, claims: HashMap<String, Value>) -> &mut Self {
         self.extra = claims;
         self
     }
-    
+
     /// Get all custom claims | 获取所有自定义声明
     pub fn get_claims(&self) -> &HashMap<String, Value> {
         &self.extra
@@ -264,6 +260,12 @@ pub struct JwtManager {
 
     /// Audience | 受众
     audience: Option<String>,
+}
+
+impl std::fmt::Debug for JwtManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("JwtManager { .. }")
+    }
 }
 
 impl JwtManager {
@@ -327,9 +329,8 @@ impl JwtManager {
         let header = Header::new(self.algorithm.into());
         let encoding_key = EncodingKey::from_secret(self.secret.as_bytes());
 
-        encode(&header, &final_claims, &encoding_key).map_err(|e| {
-            SaTokenError::InvalidToken(format!("Failed to generate JWT: {}", e))
-        })
+        encode(&header, &final_claims, &encoding_key)
+            .map_err(|e| SaTokenError::InvalidToken(format!("Failed to generate JWT: {}", e)))
     }
 
     /// Validate and parse JWT token | 验证并解析 JWT token
@@ -346,7 +347,7 @@ impl JwtManager {
 
         // Explicitly enable expiration validation | 明确启用过期验证
         validation.validate_exp = true;
-        
+
         // Set leeway to 0 for strict validation | 设置时间偏差为0以进行严格验证
         validation.leeway = 0;
 
@@ -360,14 +361,11 @@ impl JwtManager {
 
         let decoding_key = DecodingKey::from_secret(self.secret.as_bytes());
 
-        let token_data = decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| {
-            match e.kind() {
-                jsonwebtoken::errors::ErrorKind::ExpiredSignature => {
-                    SaTokenError::TokenExpired
-                }
+        let token_data =
+            decode::<JwtClaims>(token, &decoding_key, &validation).map_err(|e| match e.kind() {
+                jsonwebtoken::errors::ErrorKind::ExpiredSignature => SaTokenError::TokenExpired,
                 _ => SaTokenError::InvalidToken(format!("JWT validation failed: {}", e)),
-            }
-        })?;
+            })?;
 
         Ok(token_data.claims)
     }
@@ -430,10 +428,7 @@ mod tests {
         assert_eq!(claims.login_id, "user_123");
         assert!(claims.exp.is_some());
         assert_eq!(claims.iss, Some("sa-token".to_string()));
-        assert_eq!(
-            claims.get_claim("role"),
-            Some(&serde_json::json!("admin"))
-        );
+        assert_eq!(claims.get_claim("role"), Some(&serde_json::json!("admin")));
     }
 
     #[test]
@@ -468,10 +463,10 @@ mod tests {
         // Should fail validation due to expiration | 应该因过期而验证失败
         let result = jwt_manager.validate(&token);
         assert!(result.is_err());
-        
+
         // Verify it's specifically an expiration error | 验证是过期错误
         match result {
-            Err(SaTokenError::TokenExpired) => {}, // Expected | 预期
+            Err(SaTokenError::TokenExpired) => {} // Expected | 预期
             _ => panic!("Expected TokenExpired error"),
         }
     }
@@ -526,4 +521,3 @@ mod tests {
         assert_eq!(login_id, "user_123");
     }
 }
-

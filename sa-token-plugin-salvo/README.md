@@ -8,9 +8,9 @@ Salvo integration for **sa-token-rust**（facade）。
 |------------------|------------|-------|
 | `v079` | `sa-token-plugin-salvo-v079` | 0.79.x |
 
-共享逻辑（无 Salvo 依赖）：**`sa-token-plugin-salvo-core`**（`SaTokenState`、`router::run_auth_flow` 等）。
+共享类型在 **`sa-token-plugin-common`**（本 crate 再导出 `SaTokenState` 等）。
 
 ```toml
-sa-token-plugin-salvo = { version = "0.1.13", features = ["memory"] }
+sa-token-plugin-salvo = { version = "0.2.0", features = ["memory"] }
 salvo = "0.79"
 ```

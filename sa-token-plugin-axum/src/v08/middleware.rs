@@ -5,12 +5,11 @@
 use std::task::{Context, Poll};
 
 use http::{Request, Response, StatusCode};
-use http_body;
-use serde_json::json;
-use tower_08 as tower;
+use sa_token_plugin_common::{
+    CONTENT_TYPE_JSON, SaLoginId, forbidden_json, unauthorized_json, write_json_body,
+};
 use tower::{Layer, Service};
-
-use sa_token_core::error::messages;
+use tower_08 as tower;
 
 /// Layer that installs [`SaCheckLoginMiddleware`].
 #[derive(Clone)]
@@ -36,7 +35,7 @@ impl<S> Layer<S> for SaCheckLoginLayer {
     }
 }
 
-/// Requires an authenticated user (`String` login id in request extensions).
+/// Requires an authenticated user (`SaLoginId` in request extensions).
 #[derive(Clone)]
 pub struct SaCheckLoginMiddleware<S> {
     inner: S,
@@ -79,12 +78,12 @@ where
     S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     ReqBody: Send + 'static,
-    ResBody: http_body::Body + Default + Send + 'static,
+    ResBody: http_body::Body + From<Vec<u8>> + Default + Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
     type Future =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+        std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -94,22 +93,14 @@ where
         let mut inner = self.inner.clone();
 
         Box::pin(async move {
-            if request.extensions().get::<String>().is_none() {
-                let mut response = Response::builder()
-                    .status(StatusCode::UNAUTHORIZED)
-                    .body(ResBody::default())
-                    .expect("Unable to create response");
-
-                let error_json = serde_json::to_string(&json!({
-                    "code": 401,
-                    "message": messages::AUTH_ERROR
-                }))
-                .unwrap_or_default();
-
-                if let Ok(header_value) = http::header::HeaderValue::from_str(&error_json) {
-                    response.headers_mut().insert("X-Sa-Token-Error", header_value);
-                }
-
+            if request.extensions().get::<SaLoginId>().is_none() {
+                let body_bytes = write_json_body(&unauthorized_json());
+                let mut response = Response::new(ResBody::from(body_bytes));
+                *response.status_mut() = StatusCode::UNAUTHORIZED;
+                response.headers_mut().insert(
+                    http::header::CONTENT_TYPE,
+                    http::HeaderValue::from_static(CONTENT_TYPE_JSON),
+                );
                 return Ok(response);
             }
 
@@ -123,12 +114,12 @@ where
     S: Service<Request<ReqBody>, Response = Response<ResBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     ReqBody: Send + 'static,
-    ResBody: http_body::Body + Default + Send + 'static,
+    ResBody: http_body::Body + From<Vec<u8>> + Default + Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
     type Future =
-        std::pin::Pin<Box<dyn std::future::Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+        std::pin::Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
     fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.inner.poll_ready(cx)
@@ -139,25 +130,19 @@ where
         let permission = self.permission.clone();
 
         Box::pin(async move {
-            if let Some(login_id) = request.extensions().get::<String>()
-                && sa_token_core::StpUtil::has_permission(login_id, &permission).await {
-                    return inner.call(request).await;
-                }
-
-            let mut response = Response::builder()
-                .status(StatusCode::FORBIDDEN)
-                .body(ResBody::default())
-                .expect("Unable to create response");
-
-            let error_json = serde_json::to_string(&json!({
-                "code": 403,
-                "message": messages::PERMISSION_REQUIRED
-            }))
-            .unwrap_or_default();
-
-            if let Ok(header_value) = http::header::HeaderValue::from_str(&error_json) {
-                response.headers_mut().insert("X-Sa-Token-Error", header_value);
+            if let Some(sa_login_id) = request.extensions().get::<SaLoginId>()
+                && sa_token_core::StpUtil::has_permission(sa_login_id.as_str(), &permission).await
+            {
+                return inner.call(request).await;
             }
+
+            let body_bytes = write_json_body(&forbidden_json(None));
+            let mut response = Response::new(ResBody::from(body_bytes));
+            *response.status_mut() = StatusCode::FORBIDDEN;
+            response.headers_mut().insert(
+                http::header::CONTENT_TYPE,
+                http::HeaderValue::from_static(CONTENT_TYPE_JSON),
+            );
 
             Ok(response)
         })

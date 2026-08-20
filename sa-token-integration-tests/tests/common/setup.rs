@@ -1,9 +1,12 @@
+// 本文件是 20 个集成测试二进制共享的 helper 模块（每个 tests/*.rs 都 `mod common;`）。
+// 单个测试二进制只会用到其中一部分函数，Rust 会对未用到的报 dead_code；
+// 20 个二进制各报一次导致 192 条噪音，故在模块级统一豁免。
+// 这不是掩盖问题：这些函数全部被至少一个测试使用，只是不被每个二进制使用。
+#![allow(dead_code)]
+
 use std::sync::{Arc, OnceLock};
 
-use sa_token_core::{
-    SaTokenConfig, SaTokenManager, StpUtil,
-    config::TokenStyle,
-};
+use sa_token_core::{SaTokenConfig, SaTokenManager, StpUtil, config::TokenStyle};
 use sa_token_storage_memory::MemoryStorage;
 
 /// Create a default in-memory storage for tests.
@@ -83,7 +86,7 @@ pub fn shared_manager() -> Arc<SaTokenManager> {
             let storage = memory_storage();
             let config = default_config();
             let manager = SaTokenManager::new(storage, config);
-            StpUtil::init_manager(manager.clone());
+            let _ = StpUtil::try_init_manager(manager.clone());
             Arc::new(manager)
         })
         .clone()

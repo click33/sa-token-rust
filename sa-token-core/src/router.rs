@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use sa_token_adapter::context::SaRequest;
-use sa_token_adapter::utils::extract_bearer_or_value;
+
+use crate::config::SaTokenConfig;
+use crate::token_io;
 
 type LoginIdValidator = Arc<dyn Fn(&str) -> bool + Send + Sync>;
 
@@ -90,6 +92,12 @@ pub struct PathAuthConfig {
     validator: Option<LoginIdValidator>,
 }
 
+impl std::fmt::Debug for PathAuthConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("PathAuthConfig { .. }")
+    }
+}
+
 impl PathAuthConfig {
     /// Create a new path authentication configuration
     /// 创建新的路径鉴权配置
@@ -146,7 +154,8 @@ impl Default for PathAuthConfig {
     }
 }
 
-use crate::{SaTokenManager, TokenValue, SaTokenContext, token::TokenInfo};
+use crate::context::{RequestAuthMeta, SaTokenContext};
+use crate::{SaTokenManager, TokenValue, token::TokenInfo};
 
 /// Authentication result after processing
 /// 处理后的鉴权结果
@@ -165,6 +174,12 @@ pub struct AuthResult {
     pub is_valid: bool,
 }
 
+impl std::fmt::Debug for AuthResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthResult { .. }")
+    }
+}
+
 impl AuthResult {
     /// Check if the request should be rejected
     /// 检查请求是否应该被拒绝
@@ -175,7 +190,7 @@ impl AuthResult {
     /// Get the login ID from token info
     /// 从token信息中获取登录ID
     pub fn login_id(&self) -> Option<&str> {
-        self.token_info.as_ref().map(|t| t.login_id.as_str())
+        self.token_info.as_ref().map(|t| t.login_id.as_ref())
     }
 }
 
@@ -198,9 +213,9 @@ pub async fn process_auth(
     manager: &SaTokenManager,
 ) -> AuthResult {
     let need_auth = config.check(path);
-    
+
     let token = token_str.map(TokenValue::new);
-    
+
     let (is_valid, token_info) = if let Some(ref t) = token {
         let valid = manager.is_valid(t).await;
         let info = if valid {
@@ -213,11 +228,14 @@ pub async fn process_auth(
         (false, None)
     };
 
-    let is_valid = is_valid && if need_auth {
-        token_info.as_ref().is_some_and(|info| config.validate_login_id(&info.login_id))
-    } else {
-        true
-    };
+    let is_valid = is_valid
+        && if need_auth {
+            token_info
+                .as_ref()
+                .is_some_and(|info| config.validate_login_id(info.login_id.as_ref()))
+        } else {
+            true
+        };
 
     AuthResult {
         need_auth,
@@ -227,56 +245,34 @@ pub async fn process_auth(
     }
 }
 
-/// Create SaTokenContext from authentication result
-/// 从鉴权结果创建SaTokenContext
-pub fn create_context(result: &AuthResult) -> SaTokenContext {
-    let mut ctx = SaTokenContext::new();
+/// 从鉴权结果创建 SaTokenContext（共享 Arc Inner，供 scope 内 switch_to 突变）
+///
+/// Create `SaTokenContext` from auth result (shared Arc Inner for `switch_to` mutations inside scope).
+pub fn create_context(result: &AuthResult, auth_meta: RequestAuthMeta) -> SaTokenContext {
+    let mut builder = SaTokenContext::builder().auth_meta(auth_meta);
     if let (Some(token), Some(info)) = (&result.token, &result.token_info) {
-        ctx.token = Some(token.clone());
-        ctx.token_info = Some(Arc::new(info.clone()));
-        ctx.login_id = Some(info.login_id.clone());
+        builder = builder
+            .token(token.clone())
+            .token_info(Arc::new(info.clone()))
+            .login_id(info.login_id.as_ref());
     }
-    ctx
+    builder.build()
 }
 
-/// Generic token extraction from any [`SaRequest`] implementation.
-/// 从任意 [`SaRequest`] 实现中按统一顺序提取 Token。
-///
-/// Order | 顺序:
-/// 1. Header `[token_name]` (Bearer semantics via [`extract_bearer_or_value`]).
-/// 2. `Authorization` header if `token_name` is not already Authorization (case-insensitive match on read side is adapter-specific).
-/// 3. Cookie `[token_name]`.
-/// 4. Query parameter `[token_name]`.
-///
-/// Empty strings are skipped. Returns `None` if nothing found.
-/// 空字符串跳过；均未命中则返回 `None`。
+/// Backward-compatible extract: all read flags true, no custom prefix.
+/// 兼容旧签名：读取开关全开、无自定义前缀。
 pub fn extract_token<R: SaRequest>(req: &R, token_name: &str) -> Option<String> {
-    if let Some(v) = req.get_header(token_name) {
-        let s = extract_bearer_or_value(&v);
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    if !token_name.eq_ignore_ascii_case("authorization")
-        && let Some(v) = req.get_header("Authorization") {
-            let s = extract_bearer_or_value(&v);
-            if !s.is_empty() {
-                return Some(s);
-            }
-        }
-    if let Some(v) = req.get_cookie(token_name) {
-        let s = v.trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    if let Some(v) = req.get_param(token_name) {
-        let s = v.trim().to_string();
-        if !s.is_empty() {
-            return Some(s);
-        }
-    }
-    None
+    let cfg = SaTokenConfig {
+        token_name: token_name.to_string(),
+        ..SaTokenConfig::default()
+    };
+    token_io::read_token(req, &cfg)
+}
+
+/// Extract using the live manager config (`is_read_*` / `token_prefix`).
+/// 使用当前 Manager 配置抽取（尊重 `is_read_*` / `token_prefix`）。
+pub fn extract_token_from<R: SaRequest>(req: &R, config: &SaTokenConfig) -> Option<String> {
+    token_io::read_token(req, config)
 }
 
 /// Outcome of [`run_auth_flow`]; bindings copy token/login_id/context into framework-specific storage (extensions, depot, etc.).
@@ -292,6 +288,12 @@ pub struct AuthFlowResult {
     pub context: SaTokenContext,
 }
 
+impl std::fmt::Debug for AuthFlowResult {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AuthFlowResult { .. }")
+    }
+}
+
 impl AuthFlowResult {
     /// `true` if the binding should respond **401** (path requires auth but token missing or invalid).
     /// 若路径要求鉴权但 token 缺失或无效，绑定层应返回 **401**，则返回 `true`。
@@ -301,16 +303,22 @@ impl AuthFlowResult {
 
     /// Run `fut` with [`SaTokenContext::scope`] using this flow's [`AuthFlowResult::context`] (await-safe).
     /// 用本流的 [`AuthFlowResult::context`] 调用 [`SaTokenContext::scope`] 执行 `fut`（可跨 await）。
+    ///
+    /// Context 内部可变：scope 后 `switch_to` 可就地突变共享 Arc。
+    /// 同时建立授权快照：B2 特性，请求级权限缓存。
+    ///
+    /// Context is internally mutable: `switch_to` can mutate shared Arc in-place after scope.
+    /// Also establishes authz snapshot (B2 feature, request-level permission cache).
     pub async fn run<F, R>(self, fut: F) -> R
     where
-        F: std::future::Future<Output = R>,
+        F: Future<Output = R>,
     {
         SaTokenContext::scope(self.context, fut).await
     }
 }
 
-/// Full auth pipeline: [`extract_token`] → optional [`PathAuthConfig`] via [`process_auth`], else default check → [`create_context`].
-/// 完整鉴权流水线：[`extract_token`] → 若有 [`PathAuthConfig`] 则 [`process_auth`]，否则默认校验 → [`create_context`]。
+/// Full auth pipeline: [`extract_token_from`] → optional [`PathAuthConfig`] via [`process_auth`], else default check → [`create_context`].
+/// 完整鉴权流水线：[`extract_token_from`] → 若有 [`PathAuthConfig`] 则 [`process_auth`]，否则默认校验 → [`create_context`]。
 ///
 /// Pass `path_config: None` for “validate token if present, no path-based reject”.
 /// `path_config` 为 `None` 时表示：有 token 则校验并填上下文，不按路径规则拒绝。
@@ -319,16 +327,16 @@ pub async fn run_auth_flow<R: SaRequest>(
     manager: &SaTokenManager,
     path_config: Option<&PathAuthConfig>,
 ) -> AuthFlowResult {
-    let token_name = manager.config.token_name.as_str();
-    let token_str = extract_token(req, token_name);
+    let token_str = extract_token_from(req, &manager.config);
     let path = req.get_path();
+    let auth_meta = RequestAuthMeta::from_request(req, manager.config.same_token_header.as_str());
 
     let (auth, ctx) = match path_config {
         Some(cfg) => {
             // Path-based rules: may set need_auth / should_reject.
             // 基于路径的规则：可产生 need_auth / should_reject。
             let auth = process_auth(path.as_str(), token_str.clone(), cfg, manager).await;
-            let ctx = create_context(&auth);
+            let ctx = create_context(&auth, auth_meta);
             (auth, ctx)
         }
         None => {
@@ -352,7 +360,7 @@ pub async fn run_auth_flow<R: SaRequest>(
                 token_info,
                 is_valid,
             };
-            let ctx = create_context(&auth);
+            let ctx = create_context(&auth, auth_meta);
             (auth, ctx)
         }
     };
@@ -366,4 +374,3 @@ pub async fn run_auth_flow<R: SaRequest>(
         context: ctx,
     }
 }
-

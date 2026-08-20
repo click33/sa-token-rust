@@ -7,9 +7,7 @@ mod common;
 
 use common::setup;
 use sa_token_core::{
-    JwtManager, JwtClaims, JwtAlgorithm,
-    SaTokenConfig, SaTokenError, StpUtil,
-    config::TokenStyle,
+    JwtAlgorithm, JwtClaims, JwtManager, SaTokenConfig, SaTokenError, config::TokenStyle,
 };
 
 const TEST_SECRET: &str = "test-secret-key-for-jwt-minimum-32-chars-long";
@@ -182,11 +180,14 @@ async fn test_jwt_wrong_algorithm() {
     let token = mgr_hs256.login("user_algo").await.expect("login");
     // Try to validate with HS512 JwtManager (different algorithm)
     let other_jwt = JwtManager::with_algorithm(TEST_SECRET, JwtAlgorithm::HS512);
-    let result = other_jwt.validate(token.as_str());
+    let _result = other_jwt.validate(token.as_str());
     // jsonwebtoken may or may not reject it depending on the library behavior
     // For HMAC variants, the key is the same so it might actually work
     // Let's just check that the original manager still validates it
-    assert!(mgr_hs256.is_valid(&token).await, "original manager should still validate");
+    assert!(
+        mgr_hs256.is_valid(&token).await,
+        "original manager should still validate"
+    );
 }
 
 #[tokio::test]
@@ -226,8 +227,7 @@ async fn test_jwt_empty_secret_handled() {
 
 #[tokio::test]
 async fn test_jwt_issuer_mismatch() {
-    let jwt_mgr = JwtManager::new(TEST_SECRET)
-        .set_issuer("expected-issuer");
+    let jwt_mgr = JwtManager::new(TEST_SECRET).set_issuer("expected-issuer");
     let mut claims = JwtClaims::new("user_iss");
     claims.set_expiration(3600);
     claims.set_issuer("different-issuer");
@@ -250,7 +250,10 @@ async fn test_jwt_remaining_time() {
     assert!(!decoded.is_expired());
     let remaining = decoded.remaining_time();
     assert!(remaining.is_some());
-    assert!(remaining.unwrap() > 0, "should have positive remaining time");
+    assert!(
+        remaining.unwrap() > 0,
+        "should have positive remaining time"
+    );
 }
 
 #[tokio::test]

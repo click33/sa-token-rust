@@ -5,14 +5,14 @@
 
 mod common;
 
+use chrono::Utc;
+use sa_token_core::{
+    DistributedSession, DistributedSessionManager, InMemoryDistributedStorage, SaTokenError,
+    ServiceCredential,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::Utc;
-use sa_token_core::{
-    DistributedSessionManager, DistributedSession, ServiceCredential, SaTokenError,
-    InMemoryDistributedStorage,
-};
 
 fn test_manager() -> DistributedSessionManager {
     DistributedSessionManager::new(
@@ -39,7 +39,10 @@ async fn register_test_service(mgr: &DistributedSessionManager) {
 async fn test_verify_service_valid_credentials() {
     let mgr = test_manager();
     register_test_service(&mgr).await;
-    let cred = mgr.verify_service("svc-a", "secret_a").await.expect("verify");
+    let cred = mgr
+        .verify_service("svc-a", "secret_a")
+        .await
+        .expect("verify");
     assert_eq!(cred.service_name, "Service A");
 }
 
@@ -49,7 +52,10 @@ async fn test_verify_service_wrong_secret() {
     register_test_service(&mgr).await;
     let result = mgr.verify_service("svc-a", "wrong_secret").await;
     assert!(result.is_err());
-    assert!(matches!(result.unwrap_err(), SaTokenError::PermissionDenied));
+    assert!(matches!(
+        result.unwrap_err(),
+        SaTokenError::PermissionDenied
+    ));
 }
 
 #[tokio::test]
@@ -64,7 +70,10 @@ async fn test_verify_unregistered_service() {
 #[tokio::test]
 async fn test_create_and_get_session() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_1".into(), "token_1".into()).await.expect("create");
+    let session = mgr
+        .create_session("user_1".into(), "token_1".into())
+        .await
+        .expect("create");
     assert!(!session.session_id.is_empty());
     assert_eq!(session.login_id, "user_1");
     assert_eq!(session.token, "token_1");
@@ -76,16 +85,27 @@ async fn test_create_and_get_session() {
 #[tokio::test]
 async fn test_session_has_unique_ids() {
     let mgr = test_manager();
-    let s1 = mgr.create_session("user_1".into(), "tok1".into()).await.expect("s1");
-    let s2 = mgr.create_session("user_2".into(), "tok2".into()).await.expect("s2");
+    let s1 = mgr
+        .create_session("user_1".into(), "tok1".into())
+        .await
+        .expect("s1");
+    let s2 = mgr
+        .create_session("user_2".into(), "tok2".into())
+        .await
+        .expect("s2");
     assert_ne!(s1.session_id, s2.session_id);
 }
 
 #[tokio::test]
 async fn test_delete_session() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_del".into(), "tok_del".into()).await.expect("create");
-    mgr.delete_session(&session.session_id).await.expect("delete");
+    let session = mgr
+        .create_session("user_del".into(), "tok_del".into())
+        .await
+        .expect("create");
+    mgr.delete_session(&session.session_id)
+        .await
+        .expect("delete");
     let result = mgr.get_session(&session.session_id).await;
     assert!(result.is_err());
     assert!(matches!(result.unwrap_err(), SaTokenError::SessionNotFound));
@@ -94,9 +114,14 @@ async fn test_delete_session() {
 #[tokio::test]
 async fn test_refresh_session_extends_timeout() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_ref".into(), "tok_ref".into()).await.expect("create");
+    let session = mgr
+        .create_session("user_ref".into(), "tok_ref".into())
+        .await
+        .expect("create");
     let created = session.create_time;
-    mgr.refresh_session(&session.session_id).await.expect("refresh");
+    mgr.refresh_session(&session.session_id)
+        .await
+        .expect("refresh");
     let refreshed = mgr.get_session(&session.session_id).await.expect("get");
     // After refresh, last_active_time should be updated
     assert!(refreshed.last_access >= created);
@@ -107,27 +132,51 @@ async fn test_refresh_session_extends_timeout() {
 #[tokio::test]
 async fn test_set_and_get_attribute() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_attr".into(), "tok_attr".into()).await.expect("create");
-    mgr.set_attribute(&session.session_id, "role".to_string(), "admin".to_string()).await.expect("set");
-    let val = mgr.get_attribute(&session.session_id, "role").await.expect("get role");
+    let session = mgr
+        .create_session("user_attr".into(), "tok_attr".into())
+        .await
+        .expect("create");
+    mgr.set_attribute(&session.session_id, "role".to_string(), "admin".to_string())
+        .await
+        .expect("set");
+    let val = mgr
+        .get_attribute(&session.session_id, "role")
+        .await
+        .expect("get role");
     assert_eq!(val, Some("admin".to_string()));
 }
 
 #[tokio::test]
 async fn test_remove_attribute() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_rm_attr".into(), "tok_rm".into()).await.expect("create");
-    mgr.set_attribute(&session.session_id, "temp".to_string(), "value".to_string()).await.expect("set");
-    mgr.remove_attribute(&session.session_id, "temp").await.expect("remove");
-    let val = mgr.get_attribute(&session.session_id, "temp").await.expect("get");
+    let session = mgr
+        .create_session("user_rm_attr".into(), "tok_rm".into())
+        .await
+        .expect("create");
+    mgr.set_attribute(&session.session_id, "temp".to_string(), "value".to_string())
+        .await
+        .expect("set");
+    mgr.remove_attribute(&session.session_id, "temp")
+        .await
+        .expect("remove");
+    let val = mgr
+        .get_attribute(&session.session_id, "temp")
+        .await
+        .expect("get");
     assert_eq!(val, None);
 }
 
 #[tokio::test]
 async fn test_get_nonexistent_attribute_returns_none() {
     let mgr = test_manager();
-    let session = mgr.create_session("user_noattr".into(), "tok_na".into()).await.expect("create");
-    let val = mgr.get_attribute(&session.session_id, "no_such_key").await.expect("get");
+    let session = mgr
+        .create_session("user_noattr".into(), "tok_na".into())
+        .await
+        .expect("create");
+    let val = mgr
+        .get_attribute(&session.session_id, "no_such_key")
+        .await
+        .expect("get");
     assert_eq!(val, None);
 }
 
@@ -136,18 +185,32 @@ async fn test_get_nonexistent_attribute_returns_none() {
 #[tokio::test]
 async fn test_get_sessions_by_login_id() {
     let mgr = test_manager();
-    mgr.create_session("user_multi".into(), "tok_a".into()).await.expect("s1");
-    mgr.create_session("user_multi".into(), "tok_b".into()).await.expect("s2");
-    let sessions = mgr.get_sessions_by_login_id("user_multi").await.expect("get all");
+    mgr.create_session("user_multi".into(), "tok_a".into())
+        .await
+        .expect("s1");
+    mgr.create_session("user_multi".into(), "tok_b".into())
+        .await
+        .expect("s2");
+    let sessions = mgr
+        .get_sessions_by_login_id("user_multi")
+        .await
+        .expect("get all");
     assert_eq!(sessions.len(), 2);
 }
 
 #[tokio::test]
 async fn test_delete_all_sessions() {
     let mgr = test_manager();
-    let s1 = mgr.create_session("user_del_all".into(), "tok1".into()).await.expect("s1");
-    mgr.create_session("user_del_all".into(), "tok2".into()).await.expect("s2");
-    mgr.delete_all_sessions("user_del_all").await.expect("delete all");
+    let s1 = mgr
+        .create_session("user_del_all".into(), "tok1".into())
+        .await
+        .expect("s1");
+    mgr.create_session("user_del_all".into(), "tok2".into())
+        .await
+        .expect("s2");
+    mgr.delete_all_sessions("user_del_all")
+        .await
+        .expect("delete all");
     let result = mgr.get_session(&s1.session_id).await;
     assert!(result.is_err());
 }
@@ -167,7 +230,10 @@ async fn test_delete_nonexistent_session_is_noop() {
     let mgr = test_manager();
     // Deleting a nonexistent session is a no-op (should not error)
     let result = mgr.delete_session("no_such_session").await;
-    assert!(result.is_ok(), "delete nonexistent session should be ok (noop)");
+    assert!(
+        result.is_ok(),
+        "delete nonexistent session should be ok (noop)"
+    );
 }
 
 #[tokio::test]
@@ -184,5 +250,8 @@ async fn test_update_nonexistent_session_is_noop() {
     };
     // Updating a nonexistent session is a no-op
     let result = mgr.update_session(fake).await;
-    assert!(result.is_ok(), "update nonexistent session should be ok (noop)");
+    assert!(
+        result.is_ok(),
+        "update nonexistent session should be ok (noop)"
+    );
 }

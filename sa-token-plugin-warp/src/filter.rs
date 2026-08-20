@@ -1,27 +1,34 @@
 // Author: 金书记
 //
-//! Warp Filter (中间件)
+//! Warp Filter: unified through core `run_auth_flow`.
 
-use warp_03::{http::HeaderMap, Filter, Rejection};
+use std::sync::Arc;
 use warp_03 as warp;
+use warp_03::{Filter, Rejection, http::HeaderMap};
 
-use crate::SaTokenState;
-use sa_token_adapter::utils::{extract_bearer_or_value, parse_cookies};
+use sa_token_core::router::{AuthFlowResult, PathAuthConfig, run_auth_flow};
 use sa_token_core::token::TokenValue;
+use sa_token_plugin_common::{SaLoginId, SaTokenState};
 
-/// Token 数据，存储在请求中
+use crate::extractor::AuthError;
+use crate::snapshot::WarpRequestSnapshot;
+
+/// Request context data (for handler extraction).
 #[derive(Clone)]
 pub struct TokenData {
-    pub token: Option<TokenValue>,
-    pub login_id: Option<String>,
+    /// Auth flow result (shared across extractors).
+    pub flow: Arc<AuthFlowResult>,
 }
 
-/// sa-token 基础过滤器 - 提取并验证 token
+/// Base filter: extract token, run auth flow, does NOT enforce login.
 pub fn sa_token_filter(
     state: SaTokenState,
+    path_config: Option<PathAuthConfig>,
 ) -> impl Filter<Extract = (TokenData,), Error = Rejection> + Clone {
     warp::any()
         .and(warp::header::headers_cloned())
+        .and(warp::path::full())
+        .and(warp::method())
         .and(
             warp::query::<std::collections::HashMap<String, String>>().or_else(|_| async {
                 Ok::<(std::collections::HashMap<String, String>,), Rejection>((
@@ -29,88 +36,70 @@ pub fn sa_token_filter(
                 ))
             }),
         )
-        .and(warp::any().map(move || state.clone()))
-        .and_then(extract_and_validate_token)
+        .and(warp::any().map(move || (state.clone(), path_config.clone())))
+        .and_then(run_flow)
 }
 
-/// sa-token 登录检查过滤器 - 强制要求登录
+/// Login-enforcing filter: returns 401 rejection when `should_reject`.
 pub fn sa_check_login_filter(
     state: SaTokenState,
+    path_config: Option<PathAuthConfig>,
 ) -> impl Filter<Extract = (TokenData,), Error = Rejection> + Clone {
-    sa_token_filter(state).and_then(|token_data: TokenData| async move {
-        if token_data.token.is_some() && token_data.login_id.is_some() {
-            Ok(token_data)
+    sa_token_filter(state, path_config).and_then(|data: TokenData| async move {
+        if data.flow.should_reject() {
+            Err(warp::reject::custom(AuthError))
         } else {
-            Err(warp::reject::custom(UnauthorizedError))
+            Ok(data)
         }
     })
 }
 
-/// 提取并验证 token（cookie 名使用 `config.token_name`，不再硬编码）
-async fn extract_and_validate_token(
+async fn run_flow(
     headers: HeaderMap,
+    path: warp::path::FullPath,
+    method: warp::http::Method,
     query: std::collections::HashMap<String, String>,
-    state: SaTokenState,
+    (state, path_config): (SaTokenState, Option<PathAuthConfig>),
 ) -> Result<TokenData, Rejection> {
-    let token_name = state.manager.config.token_name.as_str();
+    let snapshot = WarpRequestSnapshot::capture(headers, query)
+        .with_path(path.as_str())
+        .with_method(method.as_str());
 
-    let mut token_str: Option<String> = None;
-
-    if let Some(header_val) = headers.get(token_name)
-        && let Ok(s) = header_val.to_str() {
-            let v = extract_bearer_or_value(s);
-            if !v.is_empty() {
-                token_str = Some(v);
-            }
-        }
-
-    if token_str.is_none() && !token_name.eq_ignore_ascii_case("authorization")
-        && let Some(header_val) = headers
-            .get("Authorization")
-            .or_else(|| headers.get("authorization"))
-            && let Ok(s) = header_val.to_str() {
-                let v = extract_bearer_or_value(s);
-                if !v.is_empty() {
-                    token_str = Some(v);
-                }
-            }
-
-    if token_str.is_none()
-        && let Some(cookie_header) = headers.get("cookie").and_then(|c| c.to_str().ok()) {
-            let cookies = parse_cookies(cookie_header);
-            if let Some(t) = cookies.get(token_name)
-                && !t.is_empty() {
-                    token_str = Some(t.clone());
-                }
-        }
-
-    if token_str.is_none() {
-        token_str = query
-            .get(token_name)
-            .cloned()
-            .filter(|s| !s.trim().is_empty());
-    }
-
-    if let Some(token_str) = token_str {
-        let token = TokenValue::new(token_str);
-
-        if state.manager.is_valid(&token).await
-            && let Ok(token_info) = state.manager.get_token_info(&token).await {
-                return Ok(TokenData {
-                    token: Some(token),
-                    login_id: Some(token_info.login_id),
-                });
-            }
-    }
+    let flow = run_auth_flow(&snapshot, &state.manager, path_config.as_ref()).await;
 
     Ok(TokenData {
-        token: None,
-        login_id: None,
+        flow: Arc::new(flow),
     })
 }
 
-/// 未授权错误
-#[derive(Debug)]
-pub struct UnauthorizedError;
+/// Extract `TokenValue` from `TokenData` via extensions.
+pub fn extract_token_value() -> impl Filter<Extract = (TokenValue,), Error = Rejection> + Clone {
+    warp::any()
+        .and(warp::filters::ext::get::<TokenData>())
+        .and_then(|data: TokenData| async move {
+            match data.flow.token.clone() {
+                Some(t) => Ok(t),
+                None => Err(warp::reject::custom(AuthError)),
+            }
+        })
+}
 
-impl warp::reject::Reject for UnauthorizedError {}
+/// Extract `SaLoginId` from `TokenData`.
+pub fn extract_login_id() -> impl Filter<Extract = (SaLoginId,), Error = Rejection> + Clone {
+    warp::any()
+        .and(warp::filters::ext::get::<TokenData>())
+        .and_then(|data: TokenData| async move {
+            match data.flow.login_id.clone() {
+                Some(id) => Ok(SaLoginId(id)),
+                None => Err(warp::reject::custom(AuthError)),
+            }
+        })
+}
+
+/// Optional `TokenValue` extractor (returns `None` without rejection when missing).
+pub fn extract_optional_token_value()
+-> impl Filter<Extract = (Option<TokenValue>,), Error = std::convert::Infallible> + Clone {
+    warp::any()
+        .and(warp::filters::ext::optional::<TokenData>())
+        .map(|data: Option<TokenData>| data.and_then(|d| d.flow.token.clone()))
+}

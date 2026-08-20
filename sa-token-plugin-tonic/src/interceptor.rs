@@ -13,9 +13,9 @@ use tonic::{Code, Request, Status};
 
 use crate::adapter::TonicCapturedRequest;
 use crate::error::{SaTokenBearerToken, SaTokenLoginId};
-use crate::state::SaTokenState;
 use sa_token_core::error::messages;
-use sa_token_core::router::{run_auth_flow, PathAuthConfig};
+use sa_token_core::router::{PathAuthConfig, run_auth_flow};
+use sa_token_plugin_common::SaTokenState;
 
 // ============================================================================
 // 中文: gRPC 服务端拦截器
@@ -155,7 +155,11 @@ pub fn create_request_adapter(
     method: &str,
     path: &str,
 ) -> crate::adapter::TonicRequestAdapter {
-    crate::adapter::TonicRequestAdapter::from_metadata(metadata, method.to_string(), path.to_string())
+    crate::adapter::TonicRequestAdapter::from_metadata(
+        metadata,
+        method.to_string(),
+        path.to_string(),
+    )
 }
 
 // ============================================================================

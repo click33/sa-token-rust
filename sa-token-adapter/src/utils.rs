@@ -46,8 +46,8 @@
 //
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-use std::collections::HashMap;
 use crate::context::CookieOptions;
+use std::collections::HashMap;
 
 /// 中文 | English
 /// 解析 Cookie 字符串为键值对映射 | Parse Cookie string into key-value map
@@ -68,9 +68,9 @@ use crate::context::CookieOptions;
 pub fn parse_cookies(cookie_header: &str) -> HashMap<String, String> {
     let mut cookies = HashMap::new();
     for pair in cookie_header.split(';') {
-        let parts: Vec<&str> = pair.trim().splitn(2, '=').collect();
-        if parts.len() == 2 {
-            cookies.insert(parts[0].to_string(), parts[1].to_string());
+        let mut parts = pair.trim().splitn(2, '=');
+        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+            cookies.insert(k.to_string(), v.to_string());
         }
     }
     cookies
@@ -95,11 +95,11 @@ pub fn parse_cookies(cookie_header: &str) -> HashMap<String, String> {
 pub fn parse_query_string(query: &str) -> HashMap<String, String> {
     let mut params = HashMap::new();
     for pair in query.split('&') {
-        let parts: Vec<&str> = pair.splitn(2, '=').collect();
-        if parts.len() == 2 {
+        let mut parts = pair.splitn(2, '=');
+        if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
             params.insert(
-                urlencoding::decode(parts[0]).unwrap_or_default().to_string(),
-                urlencoding::decode(parts[1]).unwrap_or_default().to_string(),
+                urlencoding::decode(k).unwrap_or_default().to_string(),
+                urlencoding::decode(v).unwrap_or_default().to_string(),
             );
         }
     }
@@ -133,7 +133,7 @@ pub fn parse_query_string(query: &str) -> HashMap<String, String> {
 /// ```
 pub fn build_cookie_string(name: &str, value: &str, options: CookieOptions) -> String {
     let mut cookie = format!("{}={}", name, value);
-    
+
     if let Some(domain) = options.domain {
         cookie.push_str(&format!("; Domain={}", domain));
     }
@@ -152,7 +152,7 @@ pub fn build_cookie_string(name: &str, value: &str, options: CookieOptions) -> S
     if let Some(same_site) = options.same_site {
         cookie.push_str(&format!("; SameSite={}", same_site));
     }
-    
+
     cookie
 }
 
@@ -178,7 +178,10 @@ pub fn strip_bearer_or_passthrough(s: &str) -> String {
 }
 
 /// 兼容旧 API：语义同 [`strip_bearer_prefix`]。
-#[deprecated(since = "0.2.0", note = "use strip_bearer_prefix or extract_bearer_or_value")]
+#[deprecated(
+    since = "0.2.0",
+    note = "use strip_bearer_prefix or extract_bearer_or_value"
+)]
 pub fn extract_bearer_token(auth_header: &str) -> Option<String> {
     strip_bearer_prefix(auth_header)
 }
@@ -206,16 +209,20 @@ mod tests {
     #[test]
     fn test_build_cookie_string() {
         use crate::context::SameSite;
-        
-        let cookie = build_cookie_string("session", "abc123", CookieOptions {
-            domain: Some("example.com".to_string()),
-            path: Some("/".to_string()),
-            max_age: Some(3600),
-            http_only: true,
-            secure: true,
-            same_site: Some(SameSite::Strict),
-        });
-        
+
+        let cookie = build_cookie_string(
+            "session",
+            "abc123",
+            CookieOptions {
+                domain: Some("example.com".to_string()),
+                path: Some("/".to_string()),
+                max_age: Some(3600),
+                http_only: true,
+                secure: true,
+                same_site: Some(SameSite::Strict),
+            },
+        );
+
         assert!(cookie.contains("session=abc123"));
         assert!(cookie.contains("Domain=example.com"));
         assert!(cookie.contains("Path=/"));
@@ -246,4 +253,3 @@ mod tests {
         assert_eq!(extract_bearer_or_value("  x  "), "x");
     }
 }
-

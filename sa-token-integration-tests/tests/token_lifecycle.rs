@@ -6,11 +6,7 @@
 mod common;
 
 use common::setup;
-use sa_token_core::{
-    SaTokenConfig, SaTokenError,
-    config::TokenStyle,
-    token::TokenValue,
-};
+use sa_token_core::{SaTokenConfig, SaTokenError, config::TokenStyle, token::TokenValue};
 
 // ── Success cases: token generation styles ─────────────────────────────────
 
@@ -35,7 +31,10 @@ async fn test_simple_uuid_no_hyphens() {
         .build_config();
     let mgr = setup::fresh_manager_with_config(config);
     let token = mgr.login("user_1").await.expect("login");
-    assert!(!token.as_str().contains('-'), "SimpleUuid should NOT contain hyphens");
+    assert!(
+        !token.as_str().contains('-'),
+        "SimpleUuid should NOT contain hyphens"
+    );
 }
 
 #[tokio::test]
@@ -96,7 +95,10 @@ async fn test_timestamp_style_format() {
     let mgr = setup::fresh_manager_with_config(config);
     let token = mgr.login("user_1").await.expect("login");
     // Format: timestamp_ms_16hex
-    assert!(token.as_str().contains('_'), "Timestamp style should contain underscore");
+    assert!(
+        token.as_str().contains('_'),
+        "Timestamp style should contain underscore"
+    );
 }
 
 #[tokio::test]
@@ -120,7 +122,10 @@ async fn test_token_expires_after_timeout() {
     let token = mgr.login("user_ephemeral").await.expect("login");
     assert!(mgr.is_valid(&token).await);
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-    assert!(!mgr.is_valid(&token).await, "token should have expired after 3s (1s timeout)");
+    assert!(
+        !mgr.is_valid(&token).await,
+        "token should have expired after 3s (1s timeout)"
+    );
 }
 
 #[tokio::test]
@@ -135,7 +140,10 @@ async fn test_auto_renew_extends_token() {
     let token = mgr.login("user_renew").await.expect("login");
     // Access token to trigger auto-renew (get_token_info triggers it)
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let _info = mgr.get_token_info(&token).await.expect("should still be valid");
+    let _info = mgr
+        .get_token_info(&token)
+        .await
+        .expect("should still be valid");
     // Token should have been renewed, still valid
     assert!(mgr.is_valid(&token).await);
 }
@@ -144,7 +152,14 @@ async fn test_auto_renew_extends_token() {
 async fn test_get_token_info_returns_device_and_type() {
     let mgr = setup::fresh_manager();
     let token = mgr
-        .login_with_options("user_42", Some("vip".into()), Some("desktop".into()), None, None, None)
+        .login_with_options(
+            "user_42",
+            Some("vip".into()),
+            Some("desktop".into()),
+            None,
+            None,
+            None,
+        )
         .await
         .expect("login");
     let info = mgr.get_token_info(&token).await.expect("token info");
@@ -173,7 +188,10 @@ async fn test_timeout_negative_never_expires() {
     let mgr = setup::fresh_manager_with_config(config);
     let token = mgr.login("user_forever").await.expect("login");
     let info = mgr.get_token_info(&token).await.expect("token info");
-    assert!(info.expire_time.is_none(), "expire_time should be None when timeout=-1");
+    assert!(
+        info.expire_time.is_none(),
+        "expire_time should be None when timeout=-1"
+    );
 }
 
 // ── Failure cases ──────────────────────────────────────────────────────────
@@ -207,7 +225,11 @@ async fn test_get_token_info_expired() {
     let token = mgr.login("user_exp").await.expect("login");
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     let result = mgr.get_token_info(&token).await;
-    assert!(result.is_err(), "expired token should return error, got {:?}", result);
+    assert!(
+        result.is_err(),
+        "expired token should return error, got {:?}",
+        result
+    );
 }
 
 #[tokio::test]

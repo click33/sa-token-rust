@@ -5,15 +5,15 @@ use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 
-use actix_web::{test, web, App, HttpResponse};
+use actix_web::{App, HttpResponse, test, web};
+use axum::body::{Body, to_bytes};
 use axum_08 as axum;
-use axum::body::{to_bytes, Body};
 use http::{Request, Response};
 use sa_token_core::{SaTokenConfig, StpUtil};
 use sa_token_plugin_actix_web_v4::{MemoryStorage, SaTokenLayer, SaTokenState as ActixState};
 use sa_token_plugin_axum::{SaTokenLayer as AxumSaLayer, SaTokenState as AxumState};
-use tower_08 as tower;
 use tower::{Layer, Service, ServiceExt};
+use tower_08 as tower;
 
 fn shared_manager() -> Arc<sa_token_core::SaTokenManager> {
     static M: OnceLock<Arc<sa_token_core::SaTokenManager>> = OnceLock::new();
@@ -54,10 +54,7 @@ async fn axum_layer_survives_yield_for_stputil_current() {
     let mgr = shared_manager();
     let state = AxumState::from_manager((*mgr).clone());
 
-    let token = mgr
-        .login("u-scope-axum".to_string())
-        .await
-        .expect("login");
+    let token = mgr.login("u-scope-axum".to_string()).await.expect("login");
 
     let mut svc = AxumSaLayer::new(state).layer(YieldThenLoginIdSvc);
 
@@ -87,25 +84,18 @@ async fn actix_layer_survives_yield_for_stputil_current() {
         manager: mgr.clone(),
     };
 
-    let token = mgr
-        .login("u-scope-actix".to_string())
-        .await
-        .expect("login");
+    let token = mgr.login("u-scope-actix".to_string()).await.expect("login");
 
-    let app = test::init_service(
-        App::new().wrap(SaTokenLayer::new(state.clone())).route(
-            "/me",
-            web::get().to(|| async move {
-                for _ in 0..32 {
-                    tokio::task::yield_now().await;
-                }
-                let id = StpUtil::get_login_id_as_string()
-                    .await
-                    .expect("login id");
-                HttpResponse::Ok().body(id)
-            }),
-        ),
-    )
+    let app = test::init_service(App::new().wrap(SaTokenLayer::new(state.clone())).route(
+        "/me",
+        web::get().to(|| async move {
+            for _ in 0..32 {
+                tokio::task::yield_now().await;
+            }
+            let id = StpUtil::get_login_id_as_string().await.expect("login id");
+            HttpResponse::Ok().body(id)
+        }),
+    ))
     .await;
 
     let req = test::TestRequest::get()
