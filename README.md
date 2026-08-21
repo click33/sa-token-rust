@@ -1197,6 +1197,12 @@ StpUtil::set_roles("10001", vec!["admin".into()]).await?;
 let is_admin = StpUtil::has_role("10001", "admin").await;
 ```
 
+## 📦 Hosted Repositories
+
+- Gitee: [https://gitee.com/sa-tokens/sa-token-rust](https://gitee.com/sa-tokens/sa-token-rust)
+- AtomGit: [https://atomgit.com/sa-tokens/sa-token-rust](https://atomgit.com/sa-tokens/sa-token-rust)
+- GitHub: [https://github.com/sa-tokens/sa-token-rust](https://github.com/sa-tokens/sa-token-rust)
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
