@@ -11,15 +11,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 fn test_user(login_id: &str, token: &str, device: &str) -> OnlineUser {
-    OnlineUser {
-        login_type: "login".to_string(),
-        login_id: login_id.to_string(),
-        token: token.to_string(),
-        device: device.to_string(),
-        connect_time: Utc::now(),
-        last_activity: Utc::now(),
-        metadata: HashMap::new(),
-    }
+    OnlineUser::new(login_id, token, device)
 }
 
 // ── Success cases ──────────────────────────────────────────────────────────

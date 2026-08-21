@@ -302,6 +302,9 @@ impl NonceManager {
     /// Validate and consume nonce atomically via set_if_absent.
     /// 通过 set_if_absent 原子校验并消费 nonce。
     pub async fn validate_and_consume(&self, nonce: &str, login_id: &str) -> SaTokenResult<()> {
+        if nonce.trim().is_empty() {
+            return Err(SaTokenError::InvalidToken("nonce must not be empty".into()));
+        }
         let key = self.dao.keys().nonce(nonce);
         let record = NonceRecord::new(login_id);
         let raw = self.dao.encode(&record)?;

@@ -110,6 +110,7 @@ App::new().wrap(SaTokenMiddleware::with_path_auth(
 
 ## 相关链接
 
+- 仓库示例：`cargo run --example path_auth_example`（[`examples/path_auth_example.rs`](https://github.com/sa-tokens/sa-token-rust/blob/main/examples/path_auth_example.rs)）
 - [StpUtil](./stp-util.md)
 - [权限匹配与宏](./permission-matching.md)
 - [框架集成](./framework-integration.md)

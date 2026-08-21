@@ -90,6 +90,10 @@ path = "examples/sso_example.rs"
 name = "stp_util_example"
 path = "examples/stp_util_example.rs"
 
+[[example]]
+name = "path_auth_example"
+path = "examples/path_auth_example.rs"
+
 # ══════════════════════════════════════════════════════════════════
 # workspace 成员与 exclude：tonic-full-example 仅保留在 members
 # （原先同时出现在两处，导致 cargo metadata 语义矛盾）
@@ -131,7 +135,6 @@ exclude = [
 resolver = "3"
 
 [workspace.package]
-# 0.1.18 → 0.2.0：破坏性变更版本（总纲第三节）
 version = "0.2.0"
 edition = "2024"
 # MSRV：edition 2024 要求 Rust >= 1.85

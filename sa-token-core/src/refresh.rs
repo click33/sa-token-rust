@@ -411,6 +411,14 @@ mod tests {
             crate::keys::SaKeys::from_config(&config).token_info(new_access_token.as_str());
         let stored = storage.get(&token_key).await.unwrap();
         assert!(stored.is_some());
+
+        // 刷新后旧 access 的 token_info 必须删除
+        let old_key = crate::keys::SaKeys::from_config(&config).token_info(old_access_token);
+        let old_stored = storage.get(&old_key).await.unwrap();
+        assert!(
+            old_stored.is_none(),
+            "old access token_info must be removed after refresh"
+        );
     }
 
     #[tokio::test]

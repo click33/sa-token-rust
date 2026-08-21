@@ -27,7 +27,7 @@ fn ctx_survives_yield_and_thread_hop() {
 
         let ctx = SaTokenContext::builder()
             .token(token.clone())
-            .login_id(info.login_id.clone())
+            .login_id(info.login_id.as_ref())
             .token_info(Arc::new(info))
             .build();
 

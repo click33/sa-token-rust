@@ -674,6 +674,11 @@ impl SaStorage for RedisStorage {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use sa_token_adapter::storage::SaStorage;
+    use std::sync::Arc;
+    use std::time::Duration;
+
     #[test]
     fn test_logical_key_stripping_matches_manager_expectations() {
         let prefix = "phys:";
@@ -684,5 +689,37 @@ mod tests {
             .map(|k| k.get(n..).map(str::to_string).unwrap_or(k))
             .collect();
         assert_eq!(logical, vec!["sa:token:a", "sa:token:b"]);
+    }
+
+    /// 真实 Redis：无 REDIS_URL 时 ignore；测 set/get/ttl/get_del。
+    #[tokio::test]
+    #[ignore = "requires REDIS_URL"]
+    async fn test_redis_set_get_ttl_get_del() {
+        let url = std::env::var("REDIS_URL").expect("REDIS_URL");
+        let storage = RedisStorage::connect(&url).await.expect("connect");
+        let storage: Arc<dyn SaStorage> = Arc::new(storage);
+        let key = format!(
+            "sa:test:gray:{}_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            std::process::id()
+        );
+        storage
+            .set(&key, "v1", Some(Duration::from_secs(30)))
+            .await
+            .expect("set");
+        assert_eq!(
+            storage.get(&key).await.expect("get").as_deref(),
+            Some("v1")
+        );
+        let ttl = storage.ttl(&key).await.expect("ttl");
+        assert!(ttl.is_some());
+        let secs = ttl.unwrap().as_secs();
+        assert!(secs > 0 && secs <= 30);
+        let taken = storage.get_del(&key).await.expect("get_del");
+        assert_eq!(taken.as_deref(), Some("v1"));
+        assert!(storage.get(&key).await.expect("gone").is_none());
     }
 }

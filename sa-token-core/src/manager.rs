@@ -867,12 +867,44 @@ mod tests {
 
     #[tokio::test]
     async fn test_auto_renew_updates_last_active_time() {
-        let mgr = make_manager(true, true, 3600);
+        // renew_threshold=-1：每次访问都续期；否则默认 300 对新 token 永不触发
+        let config = SaTokenConfig {
+            timeout: 3600,
+            token_style: TokenStyle::Uuid,
+            is_concurrent: true,
+            auto_renew: true,
+            active_timeout: 3600,
+            renew_threshold: -1,
+            ..Default::default()
+        };
+        let mgr = SaTokenManager::new(Arc::new(MemoryStorage::new()), config);
         let token = mgr.login("user_1").await.unwrap();
         let before = mgr.get_token_info(&token).await.unwrap().last_active_time;
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        let after_info = mgr.get_token_info(&token).await.unwrap();
+        assert!(
+            after_info.last_active_time > before,
+            "auto_renew must advance last_active_time"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_auto_renew_skipped_when_remaining_above_threshold() {
+        let config = SaTokenConfig {
+            timeout: 3600,
+            auto_renew: true,
+            renew_threshold: 300,
+            active_timeout: -1,
+            token_style: TokenStyle::Uuid,
+            ..Default::default()
+        };
+        let mgr = SaTokenManager::new(Arc::new(MemoryStorage::new()), config);
+        let token = mgr.login("user_skip").await.unwrap();
+        let before = mgr.get_token_info(&token).await.unwrap().last_active_time;
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         let after = mgr.get_token_info(&token).await.unwrap().last_active_time;
-        assert!(after >= before);
+        // remaining ~3600 > 300 → 不应续期
+        assert_eq!(after, before);
     }
 
     #[tokio::test]

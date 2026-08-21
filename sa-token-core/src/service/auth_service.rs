@@ -104,6 +104,23 @@ impl AuthService {
 
         let mut compensator = LoginCompensator::new();
 
+        // 默认 login 服务封禁时拒绝登录（与 check_disable 契约对齐）
+        {
+            use crate::disable::{DEFAULT_DISABLE_SERVICE, MIN_DISABLE_LEVEL, NOT_DISABLE_LEVEL};
+            let key = self
+                .dao
+                .keys()
+                .disable(&login_type, &login_id, DEFAULT_DISABLE_SERVICE);
+            if let Some(raw) = self.dao.get_string(&key).await? {
+                let level: i32 = raw.parse().unwrap_or(MIN_DISABLE_LEVEL);
+                if level != NOT_DISABLE_LEVEL && level >= MIN_DISABLE_LEVEL {
+                    return Err(SaTokenError::AccountBanned(format!(
+                        "service={DEFAULT_DISABLE_SERVICE} level={level}"
+                    )));
+                }
+            }
+        }
+
         if self.config.enable_nonce
             && let Some(ref nonce_str) = req.nonce
         {
@@ -197,6 +214,19 @@ impl AuthService {
         }
 
         compensator.commit();
+
+        if let Some(online) = &self.online_manager {
+            let device = req.effective_device().unwrap_or("unknown");
+            let mut user = crate::online::OnlineUser::new(
+                login_id.clone(),
+                token.as_str().to_string(),
+                device.to_string(),
+            );
+            user.login_type = login_type.clone();
+            if let Err(e) = online.mark_online(user).await {
+                tracing::warn!(error = %e, login_id = %login_id, "failed to mark online after login");
+            }
+        }
 
         if let Some(dm) = &self.distributed {
             if let Err(e) = dm
@@ -427,6 +457,8 @@ impl AuthService {
 
         match effective_range {
             ReplacedRange::CurrDeviceType => {
+                // 仅收集同设备类型终端；不把 login:token 映射一律纳入，
+                // 否则异端登录仍会顶掉其它设备（违背 CurrDeviceType）。
                 for t in self.session_repo.get_terminal_list(ns, device).await? {
                     targets.insert(t.token_value);
                 }
@@ -435,15 +467,14 @@ impl AuthService {
                 for t in self.token_repo.list_tokens(login_type, login_id).await? {
                     targets.insert(t);
                 }
+                if let Some(old) = self
+                    .token_repo
+                    .get_login_mapping(login_type, login_id)
+                    .await?
+                {
+                    targets.insert(old);
+                }
             }
-        }
-
-        if let Some(old) = self
-            .token_repo
-            .get_login_mapping(login_type, login_id)
-            .await?
-        {
-            targets.insert(old);
         }
 
         targets.remove(new_token);

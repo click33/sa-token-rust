@@ -128,6 +128,11 @@ impl SaSession {
         self.data.contains_key(key)
     }
 
+    /// 返回会话数据全部键名 | Return all session data keys
+    pub fn keys(&self) -> Vec<String> {
+        self.data.keys().cloned().collect()
+    }
+
     /// 新增一个终端：自动分配 index = history_terminal_count + 1，并累加历史计数
     pub fn add_terminal(&mut self, mut terminal: SaTerminalInfo) {
         self.history_terminal_count += 1;

@@ -81,6 +81,10 @@ mod tests {
         let loaded = mgr.get_token_session(&token).await.unwrap();
         assert_eq!(loaded.get::<String>("k"), Some("v".to_string()));
         mgr.delete_token_session(&token).await.unwrap();
+        // 灰盒：存储键必须消失（不能只靠 get 重建后看空字段）
+        let key = mgr.keys().token_session(token.as_str());
+        let raw = mgr.storage().get(&key).await.unwrap();
+        assert!(raw.is_none(), "token_session key must be deleted");
         let after = mgr.get_token_session(&token).await.unwrap();
         assert!(after.get::<String>("k").is_none());
     }

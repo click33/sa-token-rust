@@ -226,10 +226,19 @@ impl SsoServer {
     }
 
     fn validate_service_access(&self, service: &str) -> SaTokenResult<()> {
-        if !self.is_allowed_origin(service) {
-            return Err(SaTokenError::ServiceMismatch);
+        // allow_cross_domain=false：不做 Origin 白名单（同站默认可发票）
+        // allow_cross_domain=true：必须命中 allowed_origins
+        if !self.allow_cross_domain {
+            return Ok(());
         }
-        Ok(())
+        if self
+            .allowed_origins
+            .iter()
+            .any(|allowed| allowed == "*" || allowed == service)
+        {
+            return Ok(());
+        }
+        Err(SaTokenError::ServiceMismatch)
     }
 
     /// Create and persist a ticket; upsert session client.
@@ -250,6 +259,11 @@ impl SsoServer {
     /// 消费票据并返回 login_id。
     pub async fn validate_ticket(&self, ticket_id: &str, service: &str) -> SaTokenResult<String> {
         self.validate_service_access(service)?;
+        // 先非消费检查：SLO 登出后会话已删，未用票据也不可兑换
+        let (preview, _) = self.tickets.check(ticket_id, service).await?;
+        if !self.check_session(&preview).await {
+            return Err(SaTokenError::SsoSessionNotFound);
+        }
         self.tickets.consume(ticket_id, service).await
     }
 

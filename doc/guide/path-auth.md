@@ -110,6 +110,7 @@ App::new().wrap(SaTokenMiddleware::with_path_auth(
 
 ## Related
 
+- Example: `cargo run --example path_auth_example` ([`examples/path_auth_example.rs`](https://github.com/sa-tokens/sa-token-rust/blob/main/examples/path_auth_example.rs))
 - [StpUtil](./stp-util.md)
 - [Permissions and macros](./permission-matching.md)
 - [Framework integration](./framework-integration.md)

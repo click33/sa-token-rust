@@ -113,7 +113,7 @@ let manager = SaTokenConfig::builder()
 
 ## 示例
 
-见 `examples/`：`axum-full-example`、`actix-web-example`、`jwt_example.rs`、`sso_example.rs`、`oauth2_example.rs`、`websocket_online_example.rs` 等。
+见 `examples/`：`axum-full-example`、`actix-web-example`、`path_auth_example.rs`、`jwt_example.rs`、`sso_example.rs`、`oauth2_example.rs`、`websocket_online_example.rs` 等。
 
 ## 社区
 

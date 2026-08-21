@@ -138,7 +138,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         TokenValue::new(""), // 空字符串，会自动生成 token
         user_id3,
     );
-    token_info3.login_type = "premium".to_string();
+    token_info3.login_type = "premium".into();
     token_info3.device = Some("MacBook Pro".to_string());
     token_info3.extra_data = Some(json!({
         "subscription": "premium",
@@ -326,7 +326,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", "─".repeat(60));
 
     // 踢出移动端 | Kick out mobile device
-    StpUtil::kick_out(&token_mobile).await?;
+    StpUtil::kick_out_by_token(&token_mobile).await?;
     println!("✅ 已踢出移动端 | Mobile device kicked out");
 
     println!("\n   检查设备状态 | Check device status:");
@@ -458,7 +458,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         users.len()
     );
 
-    for user in &users {
+    for &user in &users {
         let t = StpUtil::login(user).await?;
         println!(
             "   ✓ {} 登录成功 | logged in: {}...",
@@ -469,7 +469,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 检查在线状态 | Check online status
     println!("\n   在线用户检查 | Online users check:");
-    for user in &users {
+    for &user in &users {
         let online = StpUtil::is_login_by_login_id(user).await;
         println!(
             "   - {}: {}",
@@ -484,7 +484,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 批量登出 | Batch logout
     println!("\n📝 批量登出 | Batch logout");
-    for user in &users {
+    for &user in &users {
         StpUtil::logout_by_login_id(user).await?;
         println!("   ✓ {} 已登出 | logged out", user);
     }

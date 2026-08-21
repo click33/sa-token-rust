@@ -394,3 +394,54 @@ impl TokenRepo {
         TOKEN_MAP_BE_REPLACED
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::TokenStyle;
+    use sa_token_storage_memory::MemoryStorage;
+
+    fn repo(auto_renew: bool, renew_threshold: i64, timeout: i64) -> TokenRepo {
+        let config = Arc::new(SaTokenConfig {
+            auto_renew,
+            renew_threshold,
+            timeout,
+            active_timeout: -1,
+            token_style: TokenStyle::Uuid,
+            ..Default::default()
+        });
+        let dao = Arc::new(crate::dao::SaTokenDao::new(
+            Arc::new(MemoryStorage::new()),
+            config.clone(),
+        ));
+        TokenRepo::new(dao, config)
+    }
+
+    #[test]
+    fn should_auto_renew_false_when_disabled() {
+        let r = repo(false, -1, 3600);
+        let mut info = TokenInfo::new(TokenValue::new("t"), "u");
+        info.expire_time = Some(Utc::now() + ChronoDuration::seconds(10));
+        assert!(!r.should_auto_renew(&info));
+    }
+
+    #[test]
+    fn should_auto_renew_always_when_threshold_negative() {
+        let r = repo(true, -1, 3600);
+        let mut info = TokenInfo::new(TokenValue::new("t"), "u");
+        info.expire_time = Some(Utc::now() + ChronoDuration::seconds(3500));
+        assert!(r.should_auto_renew(&info));
+    }
+
+    #[test]
+    fn should_auto_renew_only_when_remaining_within_threshold() {
+        let r = repo(true, 300, 3600);
+        let mut far = TokenInfo::new(TokenValue::new("t1"), "u");
+        far.expire_time = Some(Utc::now() + ChronoDuration::seconds(3500));
+        assert!(!r.should_auto_renew(&far));
+
+        let mut near = TokenInfo::new(TokenValue::new("t2"), "u");
+        near.expire_time = Some(Utc::now() + ChronoDuration::seconds(200));
+        assert!(r.should_auto_renew(&near));
+    }
+}

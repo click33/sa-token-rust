@@ -113,7 +113,7 @@ More topics: [doc/index.md](doc/index.md). Files under `docs/` are compatibility
 
 ## Examples
 
-See `examples/`: `axum-full-example`, `actix-web-example`, `jwt_example.rs`, `sso_example.rs`, `oauth2_example.rs`, `websocket_online_example.rs`, and others.
+See `examples/`: `axum-full-example`, `actix-web-example`, `path_auth_example.rs`, `jwt_example.rs`, `sso_example.rs`, `oauth2_example.rs`, `websocket_online_example.rs`, and others.
 
 ## Contributing and license
 

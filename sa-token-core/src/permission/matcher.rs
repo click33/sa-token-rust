@@ -188,3 +188,34 @@ impl PermissionMatcher for ExactMatcher {
         owned == required
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ant_star_vs_double_star() {
+        let m = AntPermissionMatcher;
+        let owned = vec!["user:*".to_string()];
+        assert!(m.matches(&owned, "user:list"));
+        assert!(!m.matches(&owned, "user:a:b"));
+        let owned2 = vec!["user:**".to_string()];
+        assert!(m.matches(&owned2, "user:a:b"));
+        assert!(!m.matches(&owned2, "other:x"));
+    }
+
+    #[test]
+    fn ant_empty_and_or() {
+        let m = AntPermissionMatcher;
+        let owned = vec!["a".to_string()];
+        assert!(m.matches_all(&owned, &[]));
+        assert!(!m.matches_any(&owned, &[]));
+    }
+
+    #[test]
+    fn exact_matcher() {
+        let m = ExactMatcher;
+        assert!(m.matches_one("admin", "admin"));
+        assert!(!m.matches_one("admin", "user"));
+    }
+}
