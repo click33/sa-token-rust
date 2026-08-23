@@ -91,7 +91,7 @@ sa-token-rust/
 
 <!-- <img src="docs/IMG_3972.JPG" alt="sa-token-rust 架构图" width="200px" height="300px" /> -->
 
-<img src="https://res.dev33.cn/contact/sa-token-rust--wx-group-qr.png?date=2026-08-22" alt="sa-token-rust 微信交流群" width="200px" height="300px" />
+<img src="https://res.dev33.cn/contact/sa-token-rust--wx-group-qr.png?date=2026-08-23" alt="sa-token-rust 微信交流群" width="200px" height="300px" />
 
 **架构说明：**
 
