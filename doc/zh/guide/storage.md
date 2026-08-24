@@ -43,6 +43,88 @@ let state = SaTokenState::builder()
 
 ---
 
+## 可插拔序列化（`SaSerializer`）
+
+写入存储的领域对象（TokenInfo、Session、Nonce、OAuth2/SSO 载荷等）统一经 `SaTokenConfig` 上的可插拔序列化器。调用方优先使用 `SharedSerializer`（Clone 友好枚举）。默认 JSON；可选二进制编码需开启 `fory` feature。
+
+### 默认与选型
+
+| 选择 | 适用场景 |
+|------|----------|
+| **JSON**（默认） | 兼容 0.1 / 早期 0.2 存量数据；Redis CLI 可读 |
+| **fory**（`feature = "fory"`） | 载荷更紧凑；读路径仍可解码存量纯 JSON（滚动升级） |
+
+普通安装**不必**改任何配置：不写 `.serializer(...)` 即保持 JSON。
+
+### 通过 Builder 注入
+
+类型由 `sa-token-core` 再导出（根 crate / 插件在 feature 允许时同样可用）：
+
+```rust
+use sa_token_adapter::{JsonSerializer, JsonSerializerConfig};
+use sa_token_core::{SaTokenConfig, SharedSerializer};
+use sa_token_storage_memory::MemoryStorage;
+use std::sync::Arc;
+
+// 默认 JSON — 显式写法
+let manager = SaTokenConfig::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .serializer(SharedSerializer::Json(JsonSerializer::default()))
+    .try_build()?;
+
+// 仅本地调试用的 pretty JSON（生产勿开）
+let debug = SharedSerializer::Json(JsonSerializer::with_config(JsonSerializerConfig {
+    pretty_print: true,
+    ..Default::default()
+}));
+```
+
+### 可选 fory（二进制）
+
+在依赖的 crate 上打开 feature：
+
+```toml
+# 根 meta-crate
+sa-token = { version = "0.2.0", features = ["fory"] }
+
+# 或直接依赖 core / adapter
+sa-token-core = { version = "0.2.0", features = ["fory"] }
+```
+
+```rust
+#[cfg(feature = "fory")]
+use sa_token_core::{ForySerializer, SaTokenConfig, SharedSerializer};
+use sa_token_storage_memory::MemoryStorage;
+use std::sync::Arc;
+
+#[cfg(feature = "fory")]
+let manager = SaTokenConfig::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .serializer(SharedSerializer::from(ForySerializer::default()))
+    .try_build()?;
+```
+
+二进制字符串载荷带魔数前缀 `\u{0001}STF`（`BINARY_MAGIC`），读路径据此区分格式。
+
+### 滚动升级语义
+
+| 当前序列化器 | 读存量纯 JSON | 读魔数前缀二进制 |
+|--------------|---------------|------------------|
+| JSON | 可以 | `FormatMismatch` → 表现为 `SaTokenError::SerializationError` |
+| fory | 可以（兼容路径） | 可以 |
+
+落地建议：全节点具备 `fory` 能力前继续写 JSON；再切换写路径；旧 JSON 过期或改写完成前保持 fory 读兼容。若已有二进制行再切回 JSON，解码会因格式不匹配失败——先迁移或等 TTL。
+
+### 错误
+
+`SerializerError`（`EncodeFailed` / `DecodeFailed` / `FormatMismatch` / `VersionIncompatible`）经 `Display` 映射为 `SaTokenError::SerializationError(String)`。详见 [错误参考](../reference/error-reference.md)。
+
+### Trait 概览
+
+`SaSerializer` 提供 `name` / `kind` / `encode` / `decode`，以及可选的 `encode_bytes` / `decode_bytes`。应用侧通常只通过 `SaTokenConfigBuilder::serializer` 配置，很少直接调用 trait。
+
+---
+
 ## MemoryStorage
 
 适合开发、测试与单机无持久化场景。
@@ -140,3 +222,5 @@ let state = SaTokenState::builder()
 - [快速入门](./quick-start.md)
 - [框架适配器](./adapter.md)
 - [框架集成](./framework-integration.md)
+- [迁移到 0.2](./migration-0.2.md)
+- [错误参考](../reference/error-reference.md)

@@ -293,15 +293,9 @@ impl StpUtil {
     /// Set per-token idle timeout. No-op unless `dynamic_active_timeout` is enabled.
     /// 设置单 token 闲置超时。未打开 `dynamic_active_timeout` 时返回 ConfigError。
     pub async fn update_active_timeout(token: &TokenValue, seconds: i64) -> SaTokenResult<()> {
-        let mgr = Self::try_get_manager()?;
-        if !mgr.config.dynamic_active_timeout {
-            return Err(SaTokenError::ConfigError(
-                "dynamic_active_timeout is disabled".into(),
-            ));
-        }
-        let mut info = mgr.get_token_info(token).await?;
-        info.active_timeout_override = Some(seconds);
-        mgr.token_repo().save_token_info(&info).await
+        Self::try_get_manager()?
+            .update_active_timeout(token, seconds)
+            .await
     }
 
     /// 踢人下线（使用当前请求 login_type，无上下文则 default）
@@ -1661,11 +1655,23 @@ impl TokenBuilder {
         self
     }
 
-    /// 设置绝对过期时间
-    /// Set absolute expire time
-    pub fn expire_time(mut self, expire_time: chrono::DateTime<chrono::Utc>) -> Self {
+    /// 设置绝对过期时间 / Set absolute expiration
+    pub fn expire_at(mut self, expire_time: chrono::DateTime<chrono::Utc>) -> Self {
         self.expire_time = Some(expire_time);
         self
+    }
+
+    /// 设置 Unix 秒级绝对过期时间 / Set absolute expiration from Unix seconds
+    pub fn expire_at_unix(mut self, unix_seconds: i64) -> Self {
+        self.expire_time = chrono::DateTime::from_timestamp(unix_seconds, 0);
+        self
+    }
+
+    /// Alias of [`Self::expire_at`].
+    /// [`Self::expire_at`] 的别名。
+    #[deprecated(note = "use expire_at()")]
+    pub fn expire_time(self, expire_time: chrono::DateTime<chrono::Utc>) -> Self {
+        self.expire_at(expire_time)
     }
 
     /// 执行登录：字段在登录前注入 LoginRequest 等价路径（login_with_options）。

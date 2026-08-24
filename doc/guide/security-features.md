@@ -62,10 +62,12 @@ Macro: `#[sa_check_safe("transfer")]`.
 ## Disable
 
 ```rust
-StpUtil::disable("user_1", 86400).await?;           // default service
+StpUtil::disable("user_1", 86400).await?;           // default service; current login_type
+StpUtil::disable_with_type("admin", "user_1", 86400).await?;
 StpUtil::disable_level("user_1", "comment", 2, 3600).await?;
+let level = StpUtil::get_disable_level("user_1", "comment").await?;
 StpUtil::check_disable("user_1").await?;
-StpUtil::untie_disable("user_1", "").await?;
+StpUtil::untie_disable("user_1", "comment").await?;
 ```
 
 Macro: `#[sa_check_disable]` (optional service / level — see macro docs).

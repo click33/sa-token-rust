@@ -477,16 +477,12 @@ impl SaTokenConfig {
 
     /// 将领域对象编码为存储字符串 | Encode a domain object into a storage string
     pub fn encode<T: Serialize + ?Sized>(&self, value: &T) -> SaTokenResult<String> {
-        self.serializer
-            .encode(value)
-            .map_err(|e| SaTokenError::SerializationError(e.to_string()))
+        self.serializer.encode(value).map_err(SaTokenError::from)
     }
 
     /// 从存储字符串解码领域对象 | Decode a domain object from a storage string
     pub fn decode<T: DeserializeOwned>(&self, raw: &str) -> SaTokenResult<T> {
-        self.serializer
-            .decode(raw)
-            .map_err(|e| SaTokenError::SerializationError(e.to_string()))
+        self.serializer.decode(raw).map_err(SaTokenError::from)
     }
 }
 

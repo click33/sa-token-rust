@@ -82,7 +82,7 @@ Handlers / adapters that want to emit the cookie must call `write_token_cookie` 
 | `TokenGenerator::generate_*` returning `TokenValue` | `SaTokenResult<TokenValue>` |
 | `OnlineManager` methods returning `bool`/`usize` without I/O errors | `SaTokenResult<_>` |
 | Process-local OAuth2/SSO `HashMap` stores | Dao-backed stores |
-| `put_stp_logic` / global SaLogic registry | `SaLogic::new(login_type, manager)` or `StpUtil::stp_logic` (cloneable façade) |
+| `put_stp_logic` / global SaLogic registry | **Deprecated no-ops** — use `SaLogic::new(login_type, manager)` or `StpUtil::stp_logic` (cloneable façade; no process-wide map) |
 
 ### 2.1 Import map (`*-core` → common)
 
@@ -103,8 +103,9 @@ Actix / Rocket / Salvo / Gotham / Ntex façades likewise re-export `SaTokenState
 
 | API | 0.2.0 |
 |-----|--------|
-| `StpUtil::try_init_manager` / `try_get_manager` / `try_get_config` | `SaTokenResult` |
+| `StpUtil::try_init_manager` / `try_get_manager` | `SaTokenResult` (`AlreadyInitialized` / `NotInitialized`) |
 | `SaTokenConfigBuilder::try_build` / `try_build_config` | JWT + storage checks return `Err` |
+| `SaTokenConfigBuilder::serializer` | Inject `SharedSerializer` (default JSON; optional `fory`) |
 | `SaTokenConfigBuilder::build` | Still panics on missing storage; prefer `try_build` in libraries |
 | `TokenGenerator::generate_with_login_id` | `SaTokenResult<TokenValue>` |
 | `router::extract_token(req, token_name)` | **Unchanged** (`&str` name, not `&SaTokenConfig`) |
@@ -134,7 +135,8 @@ Dao has **no** `set_json`; use `set_object` / `get_object`. Configuration errors
 - `sa-token-core/src/oauth2/` / `sso/` directories
 - `sa-token-core/src/cleanup/` — optional background cleanup (off by default)
 - `sa-token-plugin-common` — shared plugin state
-- `sa-token-adapter` — `scan`, `get_del`, `compare_and_swap`, `list_push`, `SaSerializer`
+- `sa-token-adapter` — `scan`, `get_del`, `compare_and_swap`, `list_push`, `SaSerializer` / `SharedSerializer` (optional `fory`)
+- `sa-token-core/src/codec.rs` — encode/decode helpers over the configured serializer
 
 SSO API request signing lives under `sso/sign.rs` (`RequestSign`).
 
@@ -163,8 +165,9 @@ Do not use the database backend for nonce one-shot consume, online indexes, or m
 6. Move public routes from `#[sa_ignore]` assumptions to `PathAuthConfig::exclude`.
 7. If you need Bearer / custom prefixes or cookie writes, configure `token_prefix` / `is_write_cookie` explicitly.
 8. Re-read OAuth2 client registration (hash secrets, PKCE) and SSO ticket consume.
-9. Replace any `put_stp_logic` usage with `SaLogic::new` / `StpUtil::stp_logic`.
-10. `cargo check --workspace` then `cargo clippy --workspace --lib`.
+9. Replace any `put_stp_logic` usage with `SaLogic::new` / `StpUtil::stp_logic` (old APIs are deprecated no-ops).
+10. Optional: enable `fory` and `.serializer(...)` only if you need non-JSON storage encoding (see `doc/guide/storage.md`).
+11. `cargo check --workspace` then `cargo clippy --workspace --lib`.
 
 ---
 
@@ -248,7 +251,7 @@ SaTokenConfig::builder()
 | `TokenGenerator::generate_*` 直接返回 `TokenValue` | `SaTokenResult<TokenValue>` |
 | `OnlineManager` 返回 `bool`/`usize` 且无 I/O 错误 | `SaTokenResult<_>` |
 | 进程内 OAuth2/SSO `HashMap` 存储 | Dao 后端存储 |
-| `put_stp_logic` / 全局 SaLogic 注册表 | `SaLogic::new(login_type, manager)` 或 `StpUtil::stp_logic`（可克隆门面） |
+| `put_stp_logic` / 全局 SaLogic 注册表 | **废弃空操作** — 改用 `SaLogic::new(login_type, manager)` 或 `StpUtil::stp_logic`（可克隆门面；无进程级表） |
 
 ### 2.1 Import 对照（`*-core` → common）
 
@@ -269,8 +272,9 @@ Actix / Rocket / Salvo / Gotham / Ntex 门面同样从 `sa-token-plugin-common` 
 
 | API | 0.2.0 |
 |-----|--------|
-| `StpUtil::try_init_manager` / `try_get_manager` / `try_get_config` | `SaTokenResult` |
+| `StpUtil::try_init_manager` / `try_get_manager` | `SaTokenResult`（`AlreadyInitialized` / `NotInitialized`） |
 | `SaTokenConfigBuilder::try_build` / `try_build_config` | JWT + storage 检查返回 `Err` |
+| `SaTokenConfigBuilder::serializer` | 注入 `SharedSerializer`（默认 JSON；可选 `fory`） |
 | `SaTokenConfigBuilder::build` | 缺 storage 仍会 panic；库代码请用 `try_build` |
 | `TokenGenerator::generate_with_login_id` | `SaTokenResult<TokenValue>` |
 | `router::extract_token(req, token_name)` | **未变**（`&str` 名称，不是 `&SaTokenConfig`） |
@@ -300,7 +304,8 @@ Dao **没有** `set_json`；用 `set_object` / `get_object`。配置错误类型
 - `sa-token-core/src/oauth2/` / `sso/` 目录
 - `sa-token-core/src/cleanup/` — 可选后台清理（默认关）
 - `sa-token-plugin-common` — 共享插件状态
-- `sa-token-adapter` — `scan`、`get_del`、`compare_and_swap`、`list_push`、`SaSerializer`
+- `sa-token-adapter` — `scan`、`get_del`、`compare_and_swap`、`list_push`、`SaSerializer` / `SharedSerializer`（可选 `fory`）
+- `sa-token-core/src/codec.rs` — 基于配置序列化器的编解码辅助
 
 SSO 的 API 请求签名在 `sso/sign.rs`（`RequestSign`）。
 
@@ -329,8 +334,9 @@ SSO 的 API 请求签名在 `sso/sign.rs`（`RequestSign`）。
 6. 公开路由从「以为 `#[sa_ignore]` 能放行」改为 `PathAuthConfig::exclude`。
 7. 需要 Bearer / 自定义前缀或写 Cookie 时，显式配置 `token_prefix` / `is_write_cookie`。
 8. 重读 OAuth2 客户端注册（哈希密钥、PKCE）与 SSO 票据消费。
-9. 任何 `put_stp_logic` 用法改为 `SaLogic::new` / `StpUtil::stp_logic`。
-10. `cargo check --workspace`，再 `cargo clippy --workspace --lib`。
+9. 任何 `put_stp_logic` 用法改为 `SaLogic::new` / `StpUtil::stp_logic`（旧 API 为废弃空操作）。
+10. 可选：仅在需要非 JSON 存储编码时启用 `fory` 并 `.serializer(...)`（见 `doc/zh/guide/storage.md`）。
+11. `cargo check --workspace`，再 `cargo clippy --workspace --lib`。
 
 ---
 

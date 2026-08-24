@@ -30,8 +30,11 @@ use sa_token_plugin_axum::*;
 | `database` | Database backend (basic KV; see [Storage](/guide/storage.md) for limits) |
 | `full` | All of the above |
 
+Optional on the root / core crates: `fory` enables binary `ForySerializer` for storage payloads. Default encoding is JSON — see [Storage](/guide/storage.md).
+
 ```toml
 sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
+# sa-token = { version = "0.2.0", features = ["fory"] }
 ```
 
 ### Choosing a plugin

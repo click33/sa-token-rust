@@ -16,11 +16,11 @@
 
 中间件路径鉴权使用 `PathAuthConfig`。公开路由必须写入 `exclude`。`#[sa_ignore]` 只跳过宏插入的检查，**不会**跳过 Layer / 中间件。详见 [路径鉴权](/zh/guide/path-auth.md)。
 
-存储后端 Memory、Redis、Database 统一经 `SaTokenDao`。插件通过 Cargo feature 切换后端，键布局由 `SaKeys` 管理。Token 读写走核心 `token_io`（`read_token` / `write_token_cookie`），与各框架适配器一致。
+存储后端 Memory、Redis、Database 统一经 `SaTokenDao`。插件通过 Cargo feature 切换后端，键布局由 `SaKeys` 管理。存储载荷默认经可插拔 `SaSerializer` / `SharedSerializer` 编为 JSON（可选 `fory` 二进制 — 见 [存储](/zh/guide/storage.md)）。Token 读写走核心 `token_io`（`read_token` / `write_token_cookie`），与各框架适配器一致。
 
 JWT、Nonce、Refresh、OAuth2（含 PKCE）、SSO、WebSocket 鉴权、在线 presence、分布式 Session 与事件总线各自有独立指南，可按需接入。
 
-多账号用 `login_type` 隔离体系，例如管理端与用户端。可使用 `StpUtil::builder(...).login_type("admin")`，或 `SaLogic::new("admin", manager)` 绑定某一账号门面。
+多账号用 `login_type` 隔离体系，例如管理端与用户端。可使用 `StpUtil::builder(...).login_type("admin")`，或 `StpUtil::stp_logic("admin")?` / `manager.stp_logic("admin")` 绑定门面（`SaLogic` 为廉价 Clone，无全局注册表）。
 
 ## 项目结构
 

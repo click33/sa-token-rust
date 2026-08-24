@@ -95,6 +95,12 @@ delete_token_cookie(&mut res, manager.config());
 
 ---
 
+## SaSerializer（存储编码）
+
+`sa-token-adapter` 还定义可插拔存储编解码（`SaSerializer`、`SharedSerializer`、`JsonSerializer`、可选 `ForySerializer`）。应用通过 `SaTokenConfigBuilder::serializer` 注入 — 见 [存储](./storage.md)。普通业务不必自行实现该 trait。
+
+---
+
 ## SaTokenPlugin
 
 应用启动/关闭时的一次性钩子（替代已删除的 `FrameworkAdapter`）：

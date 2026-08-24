@@ -72,7 +72,7 @@ Groups below mirror `sa-token-core/src/error.rs`. Each row has a one-line typica
 |---------|-----------------|
 | `StorageError(String)` | Underlying `SaStorage` operation failed |
 | `ConfigError(String)` | Invalid config (missing storage, bad JWT secret, …), often from `try_build` |
-| `SerializationError(String)` | Serialize/deserialize failure (also from `serde_json::Error`) |
+| `SerializationError(String)` | Encode/decode failure. Includes `serde_json::Error` and mapped `SerializerError` (`EncodeFailed` / `DecodeFailed` / `FormatMismatch` / `VersionIncompatible` from pluggable `SaSerializer`) |
 | `InternalError(String)` | Unexpected internal failure |
 
 ### OAuth2
@@ -136,6 +136,7 @@ fn map_status(err: SaTokenError) -> u16 {
 ## Related
 
 - [Quick start](/guide/quick-start.md)
+- [Storage](/guide/storage.md)
 - [Security features](/guide/security-features.md)
 - [OAuth2](/guide/oauth2.md)
 - [SSO](/guide/sso.md)

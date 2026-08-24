@@ -20,7 +20,7 @@ pub fn encode_value<T: Serialize + ?Sized>(
 ) -> SaTokenResult<String> {
     serializer
         .encode(value)
-        .map_err(|e| SaTokenError::SerializationError(e.to_string()))
+        .map_err(SaTokenError::from)
 }
 
 /// Decode storage string; auto-detects JSON / binary magic | 解码存储字符串；自动探测 JSON / 二进制魔数
@@ -31,5 +31,5 @@ pub fn decode_value<T: DeserializeOwned>(
 ) -> SaTokenResult<T> {
     serializer
         .decode(raw)
-        .map_err(|e| SaTokenError::SerializationError(e.to_string()))
+        .map_err(SaTokenError::from)
 }

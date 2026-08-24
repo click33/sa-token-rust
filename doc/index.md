@@ -16,11 +16,11 @@ Permissions and roles go through `AuthzService`. Use `has_permission` / `check_r
 
 Path-level middleware auth uses `PathAuthConfig`. Public routes must be listed in `exclude`. `#[sa_ignore]` only skips macro-inserted checks; it does **not** bypass the Layer or middleware. See [Path auth](/guide/path-auth.md).
 
-Memory, Redis, and Database backends go through `SaTokenDao`. Switch backends with plugin Cargo features; key layout is owned by `SaKeys`. Token read/write goes through core `token_io` (`read_token` / `write_token_cookie`), shared by all framework adapters.
+Memory, Redis, and Database backends go through `SaTokenDao`. Switch backends with plugin Cargo features; key layout is owned by `SaKeys`. Payload encoding defaults to JSON via pluggable `SaSerializer` / `SharedSerializer` (optional `fory` binary — see [Storage](/guide/storage.md)). Token read/write goes through core `token_io` (`read_token` / `write_token_cookie`), shared by all framework adapters.
 
 JWT, nonce, refresh tokens, OAuth2 (with PKCE), SSO, WebSocket auth, online presence, distributed sessions, and the event bus each have dedicated guides.
 
-Multi-account isolation uses `login_type`, for example admin vs user. Prefer `StpUtil::builder(...).login_type("admin")`, or bind a façade with `SaLogic::new("admin", manager)`.
+Multi-account isolation uses `login_type`, for example admin vs user. Prefer `StpUtil::builder(...).login_type("admin")`, or bind a façade with `StpUtil::stp_logic("admin")?` / `manager.stp_logic("admin")` (`SaLogic` is a cheap Clone; there is no global registry).
 
 ## Project layout
 

@@ -9,7 +9,7 @@ A lightweight, high-performance authentication and authorization framework for R
 - 🚀 **Multiple Web Framework Support**: Axum, Actix-web, Poem, Rocket, Warp, Salvo, Tide, Gotham, Ntex
 - 🔐 **Complete Authentication**: Login, logout, token validation, session management
 - 🛡️ **Fine-grained Authorization**: Permission and role-based access control
-- 💾 **Flexible Storage**: Memory, Redis, and database storage backends
+- 💾 **Flexible Storage**: Memory, Redis, and database backends; pluggable `SaSerializer` (JSON default, optional `fory` binary)
 - 🎯 **Easy to Use**: Procedural macros and utility classes for simple integration
 - ⚡ **High Performance**: Zero-copy design, async/await support
 - 🔧 **Highly Configurable**: Token timeout, cookie options, custom token names
@@ -678,9 +678,9 @@ Isolate multiple account systems by `login_type` and track per-device terminals:
 ```rust
 use sa_token_core::StpUtil;
 
-// Multi-account system: admin and user are fully isolated
-let admin = StpUtil::stp_logic("admin");
-let user = StpUtil::stp_logic("user");
+// Multi-account system: admin and user are fully isolated (Result-returning factory)
+let admin = StpUtil::stp_logic("admin")?;
+let user = StpUtil::stp_logic("user")?;
 
 // Same login_id, different isolated tokens
 let admin_token = admin.login("10001").await?;
@@ -910,6 +910,7 @@ Most documentation is available in 7 languages:
 **New Features:**
 - 👤 **Multi-Account System (`SaLogic`)**: Isolated multi-`login_type` account systems on a single manager
   - `StpUtil::stp_logic(login_type)` facade with a global registry (`put`/`remove`/`try_get`)
+  - **Note (0.2):** the process-wide registry was removed; `SaLogic` is a cheap Clone façade and `put_stp_logic` / `remove_stp_logic` are deprecated no-ops. See [Multi-account](doc/guide/multi-account.md).
   - Per-`login_type` isolation of session, login token map, permissions, roles, and ban (disable)
   - `account_ns`-based key namespacing keeps the `default`/`login` account byte-identical to before
 - 📱 **Multi-Device Terminal (`SaTerminalInfo`)**: Per-device login tracking on the Account-Session

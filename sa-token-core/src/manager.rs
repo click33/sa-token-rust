@@ -494,6 +494,19 @@ impl SaTokenManager {
         self.token_repo().save_token_info(&token_info).await
     }
 
+    /// Set per-token idle timeout. Errors unless `dynamic_active_timeout` is on.
+    /// 设置单 token 闲置超时。未开启 `dynamic_active_timeout` 时返回 ConfigError。
+    pub async fn update_active_timeout(&self, token: &TokenValue, seconds: i64) -> SaTokenResult<()> {
+        if !self.config.dynamic_active_timeout {
+            return Err(SaTokenError::ConfigError(
+                "dynamic_active_timeout is disabled".into(),
+            ));
+        }
+        let mut info = self.get_token_info(token).await?;
+        info.active_timeout_override = Some(seconds);
+        self.token_repo().save_token_info(&info).await
+    }
+
     /// 创建绑定 login_type 的廉价 Clone 门面
     /// Create a cheap Clone facade bound to login_type
     pub fn stp_logic(&self, login_type: &str) -> crate::stp_logic::SaLogic {

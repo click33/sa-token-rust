@@ -109,7 +109,7 @@ impl TempTokenManager {
         for _ in 0..12 {
             let candidate = random_hex(32)?;
             let key = self.dao.keys().temp_token(namespace, &candidate);
-            let raw = serde_json::to_string(&record).map_err(SaTokenError::from)?;
+            let raw = self.dao.encode(&record)?;
             if self.dao.set_if_absent(&key, &raw, ttl).await? {
                 token = candidate;
                 break;

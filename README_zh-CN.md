@@ -9,7 +9,7 @@
 - 🚀 **多框架支持**: Axum, Actix-web, Poem, Rocket, Warp, Salvo, Tide, Gotham, Ntex
 - 🔐 **完整的认证**: 登录、登出、Token 验证、Session 管理
 - 🛡️ **细粒度授权**: 基于权限和角色的访问控制
-- 💾 **灵活存储**: 内存、Redis 和数据库存储后端
+- 💾 **灵活存储**: 内存、Redis、数据库后端；可插拔 `SaSerializer`（默认 JSON，可选 `fory` 二进制）
 - 🎯 **易于使用**: 过程宏和工具类简化集成
 - ⚡ **高性能**: 零拷贝设计，支持 async/await
 - 🔧 **高度可配置**: Token 超时、Cookie 选项、自定义 Token 名称
@@ -705,9 +705,9 @@ cargo run --example sso_example
 ```rust
 use sa_token_core::StpUtil;
 
-// 多账号体系：admin 与 user 完全隔离
-let admin = StpUtil::stp_logic("admin");
-let user = StpUtil::stp_logic("user");
+// 多账号体系：admin 与 user 完全隔离（工厂返回 Result）
+let admin = StpUtil::stp_logic("admin")?;
+let user = StpUtil::stp_logic("user")?;
 
 // 同一 login_id，得到互相隔离的不同 token
 let admin_token = admin.login("10001").await?;
@@ -935,6 +935,7 @@ warp::serve(routes)
 **新增功能：**
 - 👤 **多账号体系（`SaLogic`）**：在同一个 manager 上隔离多个 `login_type` 账号体系
   - `StpUtil::stp_logic(login_type)` 门面，配套全局注册表（`put`/`remove`/`try_get`）
+  - **说明（0.2）**：进程级注册表已取消；`SaLogic` 为廉价 Clone 门面，`put_stp_logic` / `remove_stp_logic` 为废弃空操作。见 [多账号](doc/zh/guide/multi-account.md)。
   - session、login token 映射、权限、角色、封禁均按 `login_type` 隔离
   - 基于 `account_ns` 的键命名空间，使 `default`/`login` 账号与之前逐字节一致
 - 📱 **多设备终端（`SaTerminalInfo`）**：在 Account-Session 上按设备记录登录信息

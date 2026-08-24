@@ -72,7 +72,7 @@ pub type SaTokenResult<T> = Result<T, SaTokenError>;
 |------|----------|
 | `StorageError(String)` | 底层 `SaStorage` 操作失败 |
 | `ConfigError(String)` | 配置非法（如缺 storage、JWT 密钥不合规），常见于 `try_build` |
-| `SerializationError(String)` | 序列化或反序列化失败（亦由 `serde_json::Error` 转换） |
+| `SerializationError(String)` | 编码/解码失败。含 `serde_json::Error`，以及可插拔 `SaSerializer` 映射来的 `SerializerError`（`EncodeFailed` / `DecodeFailed` / `FormatMismatch` / `VersionIncompatible`） |
 | `InternalError(String)` | 未预期的内部错误 |
 
 ### OAuth2
@@ -136,6 +136,7 @@ fn map_status(err: SaTokenError) -> u16 {
 ## 相关文档
 
 - [快速入门](/zh/guide/quick-start.md)
+- [存储](/zh/guide/storage.md)
 - [安全特性](/zh/guide/security-features.md)
 - [OAuth2](/zh/guide/oauth2.md)
 - [SSO](/zh/guide/sso.md)

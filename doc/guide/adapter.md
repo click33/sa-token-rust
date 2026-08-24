@@ -95,6 +95,12 @@ For non-`SaRequest` surfaces (for example WebSocket), use `read_token_from_maps(
 
 ---
 
+## SaSerializer (storage encoding)
+
+`sa-token-adapter` also defines the pluggable storage codec (`SaSerializer`, `SharedSerializer`, `JsonSerializer`, optional `ForySerializer`). Applications inject it via `SaTokenConfigBuilder::serializer` — see [Storage](./storage.md). You do not implement this trait for ordinary apps.
+
+---
+
 ## SaTokenPlugin
 
 One-shot startup/shutdown hooks (replaces the removed `FrameworkAdapter`):

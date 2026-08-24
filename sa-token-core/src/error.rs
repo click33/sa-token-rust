@@ -275,6 +275,12 @@ impl From<serde_json::Error> for SaTokenError {
     }
 }
 
+impl From<sa_token_adapter::serializer::SerializerError> for SaTokenError {
+    fn from(value: sa_token_adapter::serializer::SerializerError) -> Self {
+        Self::SerializationError(value.to_string())
+    }
+}
+
 impl SaTokenError {
     /// Get the error message as a string.
     ///

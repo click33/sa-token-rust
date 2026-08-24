@@ -30,8 +30,11 @@ use sa_token_plugin_axum::*;
 | `database` | 数据库后端（基本 KV；高级能力见 [存储](/zh/guide/storage.md)） |
 | `full` | 上述全部 |
 
+根 crate / core 可选 feature：`fory` 启用二进制 `ForySerializer`。默认编码仍是 JSON — 见 [可插拔序列化](/zh/guide/storage.md)。
+
 ```toml
 sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
+# sa-token = { version = "0.2.0", features = ["fory"] }
 ```
 
 ### 选择插件

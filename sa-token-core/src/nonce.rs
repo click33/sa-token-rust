@@ -263,6 +263,18 @@ impl NonceManager {
         Self::from_dao(Arc::new(SaTokenDao::new(storage, Arc::new(cfg))), timeout)
     }
 
+    /// Align serializer with Manager / config (A2-1).
+    /// 与 Manager / 配置对齐序列化器（A2-1）。
+    pub fn with_serializer(
+        mut self,
+        serializer: sa_token_adapter::serializer::SharedSerializer,
+    ) -> Self {
+        let mut cfg = (*self.dao.config()).as_ref().clone();
+        cfg.serializer = serializer;
+        self.dao = Arc::new(SaTokenDao::new(self.dao.storage().clone(), Arc::new(cfg)));
+        self
+    }
+
     fn ttl(&self) -> Option<std::time::Duration> {
         if self.timeout > 0 {
             Some(std::time::Duration::from_secs(self.timeout as u64))

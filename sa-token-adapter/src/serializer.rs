@@ -4,6 +4,20 @@
 //!
 //! Unified encode/decode for storage payloads with rolling-upgrade support
 //! (JSON default, optional fory binary). | 统一存储编解码，支持滚动升级（默认 JSON，可选 fory 二进制）。
+//!
+//! ## Design Goals | 设计目标
+//!
+//! 1. **Format Agnostic**: JSON (default), binary (`fory`), future formats
+//!    **格式无关**：JSON（默认）、二进制（`fory`）、未来格式
+//! 2. **Bytes Path**: `encode_bytes` / `decode_bytes` for Redis-friendly payloads
+//!    **字节路径**：面向 Redis 等场景的 `encode_bytes` / `decode_bytes`
+//! 3. **Rolling Upgrade**: Read path auto-detects legacy JSON + magic-prefixed binary
+//!    **滚动升级**：读路径自动探测存量 JSON + 魔数前缀二进制
+//! 4. **Fine-Grained Errors**: `EncodeFailed` / `DecodeFailed` / `FormatMismatch` / `VersionIncompatible`
+//!    **精细错误**：编码失败 / 解码失败 / 格式不匹配 / 版本不兼容
+//!
+//! Prefer [`SharedSerializer`] at call sites (Clone-friendly enum, no trait object).
+//! 调用方优先使用 [`SharedSerializer`]（Clone 友好枚举，无 trait object）。
 
 use serde::{Serialize, de::DeserializeOwned};
 

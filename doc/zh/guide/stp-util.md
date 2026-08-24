@@ -38,7 +38,7 @@ let mgr = StpUtil::try_get_manager()?; // 未初始化 → SaTokenError::NotInit
 | `init_manager` | 已废弃；失败会 panic |
 | `is_login` | **未初始化时返回 `false`**（不报错） |
 | `event_bus()` | `Option<&SaTokenEventBus>`；未初始化为 `None` |
-| `register_listener` | 未初始化时静默跳过 |
+| `register_listener` | **同步**；未初始化时静默跳过（不要 `.await`） |
 
 插件路径：`SaTokenState::builder().storage(...).build()` 同样会完成全局初始化。
 
@@ -51,51 +51,91 @@ let t1 = StpUtil::login("user_10001").await?;
 let t2 = StpUtil::login(10001).await?;
 ```
 
-## 登录族
+## 登录族与 `login_type`
 
 ```rust
-// 默认 login_type
-let token = StpUtil::login("10001").await?;
-
-// 指定账号体系
-let token = StpUtil::login_with_type("10001", "admin").await?;
-
-// 额外 JSON（常用于 JWT claims / 审计字段）
 use serde_json::json;
+
+// 始终写入默认 login_type（"default"），不会跟随请求上下文
+let token = StpUtil::login("10001").await?;
 let token = StpUtil::login_with_extra("10001", json!({"ip": "10.0.0.1"})).await?;
+
+// 显式指定非默认账号体系
+let token = StpUtil::login_with_type("10001", "admin").await?;
 ```
+
+**注意：** `login` / `login_with_extra` 固定登录到 **default** 账号体系，**不会**走 `resolve_login_type`。非 default 请用 `login_with_type`、`TokenBuilder`，或绑定 [`SaLogic`](./multi-account.md)。
+
+其余多数短方法（`kick_out`、`get_session`、`disable`、`has_permission` 等）在有请求上下文时优先用当前 `login_type`，否则回落 `default`。显式 `*_with_type` 不会猜测。
 
 ## TokenBuilder
 
 链式登录；结束时必须 `.login(None)`（`None` 用构建器里的 id，`Some(id)` 可覆盖）。
 
 ```rust
+use chrono::{Duration, Utc};
 use serde_json::json;
 
 let token = StpUtil::builder("10001")
     .login_type("admin")
     .device("pc")
     .extra_data(json!({"channel": "web"}))
-    .nonce("once-abc")          // 需配置 enable_nonce
-    // .expire_time(some_utc)   // 绝对过期
+    .nonce("once-abc")                           // 需配置 enable_nonce
+    .expire_at(Utc::now() + Duration::hours(2))  // 绝对过期
+    // .expire_at_unix(1_700_000_000)            // 或 Unix 秒
     .login(None)
     .await?;
 ```
+
+`expire_time(...)` 仍可作为 `expire_at` 的 **废弃别名** 编译；新代码请用 `expire_at` / `expire_at_unix`。
 
 多账号细节见 [多账号与终端](./multi-account.md)。
 
 ## 登出与踢人
 
 ```rust
-StpUtil::logout(&token).await?;                 // 按 token
-StpUtil::logout_current().await?;               // 当前请求上下文
-StpUtil::logout_by_login_id("10001").await?;    // 按账号（当前 login_type）
+StpUtil::logout(&token).await?;
+StpUtil::logout_current().await?;
+StpUtil::logout_by_login_id("10001").await?; // 当前 login_type，否则 default
 
-StpUtil::kick_out("10001").await?;              // 踢下线（标记 KickOut）
+StpUtil::kick_out("10001").await?;
 StpUtil::kick_out_with_type("admin", "10001").await?;
+StpUtil::kick_out_by_token(&token).await?;   // 按单个 token 踢下线
 ```
 
-`logout` 与 `kick_out` 语义不同：前者正常结束会话，后者标记为被踢，便于业务区分。
+`logout` 正常结束会话；`kick_out` / `kick_out_by_token` 标记 KickOut，便于业务区分强制下线。
+
+## Token-Session
+
+按 token 维度的 Session（与按 `login_id` 的账号 Session 分开）：
+
+```rust
+let mut sess = StpUtil::get_token_session(&token).await?;
+// 中间件注入后也可用：StpUtil::get_token_session_current().await?;
+
+sess.set("cart_id", "c-9")?;
+StpUtil::save_token_session(&token, &sess).await?;
+StpUtil::delete_token_session(&token).await?;
+```
+
+相关配置：`right_now_create_token_session`、`token_session_check_login`、`is_logout_keep_token_session`。
+
+## 封禁（含按类型）
+
+```rust
+// 使用当前请求 login_type，否则 default
+StpUtil::disable("10001", 86400).await?;
+StpUtil::disable_level("10001", "comment", 2, 3600).await?;
+
+// 显式账号体系
+StpUtil::disable_with_type("admin", "10001", 86400).await?;
+
+let level = StpUtil::get_disable_level("10001", "comment").await?;
+StpUtil::check_disable("10001").await?;
+StpUtil::untie_disable("10001", "comment").await?;
+```
+
+更多封禁 / 二级认证 / Same-Token 等见 [安全能力](./security-features.md)。
 
 ## 当前请求上下文
 
@@ -113,6 +153,8 @@ if StpUtil::is_login_current() { /* ... */ }
 StpUtil::check_login_current_async().await?;
 ```
 
+`#[sa_check_login]` 展开为异步存储校验（`check_login_current_async`）；使用该宏的 handler 必须是 `async`。
+
 ## 登录状态
 
 ```rust
@@ -123,7 +165,7 @@ let ok = StpUtil::is_login_by_login_id("10001").await;
 
 ## 权限与角色
 
-`has_*` 返回 `bool`（未初始化为 `false`）；`check_*` 失败返回 `Err`。
+`has_*` 返回 `bool`（未初始化为 `false`）；`check_*` 失败返回 `Err`。**不要**对 `has_*` 使用 `?`。
 
 ```rust
 StpUtil::set_permissions("10001", vec!["user:add".into(), "user:*".into()]).await?;
@@ -155,7 +197,7 @@ SaTokenConfig::builder()
 if let Some(bus) = StpUtil::event_bus() {
     bus.register(Arc::new(MyListener));
 }
-StpUtil::register_listener(Arc::new(MyListener)); // 未 init 则 no-op
+StpUtil::register_listener(Arc::new(MyListener)); // 未 init 则 no-op；非异步
 ```
 
 完整钩子与 `DispatchMode` 见 [事件监听](./event-listener.md)。
@@ -163,6 +205,8 @@ StpUtil::register_listener(Arc::new(MyListener)); // 未 init 则 no-op
 ## 相关链接
 
 - [快速入门](./quick-start.md)
+- [多账号与终端](./multi-account.md)
 - [路径鉴权](./path-auth.md)
 - [权限匹配与宏](./permission-matching.md)
+- [安全能力](./security-features.md)
 - [错误参考](/zh/reference/error-reference.md)

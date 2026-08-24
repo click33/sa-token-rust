@@ -10,16 +10,19 @@ This page is self-contained for the 0.2 APIs — no external long-form docs requ
 
 - Default is the constant `default` (empty string normalizes to default).
 - Different `login_type` values do not share `login:token`, account session, or grant keys.
-- If the request context sets a current `login_type`, most `StpUtil` APIs prefer it; otherwise they fall back to default.
+- If the request context sets a current `login_type`, most **non-login** `StpUtil` APIs prefer it; otherwise they fall back to default.
+- `StpUtil::login` / `login_with_extra` always use **default** — they do not follow the request context. Use `login_with_type`, `TokenBuilder`, or `SaLogic` for other types.
 
 ## Login with TokenBuilder
 
 ```rust
+use chrono::{Duration, Utc};
 use sa_token_core::StpUtil;
 
 let admin_token = StpUtil::builder("42")
     .login_type("admin")
     .device("pc")
+    .expire_at(Utc::now() + Duration::hours(8))
     .login(None::<String>)
     .await?;
 
@@ -30,15 +33,24 @@ let user_token = StpUtil::builder("42")
     .await?;
 ```
 
-Same `login_id`, different `login_type` → two login states. You can also chain `extra_data` / `nonce` / `expire_time`.
+Same `login_id`, different `login_type` → two login states. You can also chain `extra_data` / `nonce` / `expire_at` / `expire_at_unix` (`expire_time` is a deprecated alias).
 
 Equivalent lower level: `LoginRequest::new(...).login_type(...).device(...)` into the Manager.
 
 ## SaLogic (type-bound facade)
 
+There is **no** process-wide SaLogic registry in 0.2. `SaLogic` is a cheap `Clone` façade that holds a cloned `SaTokenManager` and a fixed `login_type`. `put_stp_logic` / `remove_stp_logic` remain as deprecated no-ops for source compatibility.
+
 ```rust
+use sa_token_core::{SaLogic, StpUtil};
+
+// Preferred: Result-returning factory
+let admin = StpUtil::stp_logic("admin")?;
+
+// Or from a Manager clone
 let manager = StpUtil::try_get_manager()?;
-let admin = manager.stp_logic("admin"); // or SaLogic::new("admin", manager)
+let admin = manager.stp_logic("admin");
+// SaLogic::new("admin", manager.as_ref().clone()) also works
 
 let token = admin.login("42").await?;
 admin.login_with_device("42", Some("pc".into()), None).await?;
@@ -59,16 +71,22 @@ admin.kick_out("42").await?;
 
 ```rust
 StpUtil::set_permissions_with_type("admin", "42", vec!["user:delete".into()]).await?;
-StpUtil::has_permission_with_type("admin", "42", "user:delete").await?;
+
+// has_* returns bool — do not use ?
+if StpUtil::has_permission_with_type("admin", "42", "user:delete").await {
+    // ...
+}
 
 StpUtil::kick_out_with_type("admin", "42").await?;
 StpUtil::get_token_by_login_id_with_type("admin", "42").await?;
+StpUtil::disable_with_type("admin", "42", 3600).await?;
 ```
 
-Short methods without `_with_type` use “current context login_type, else default”.
+Short methods without `_with_type` use “current context login_type, else default” (except `login` / `login_with_extra`, as noted above).
 
 ## Related
 
 - [StpUtil](/guide/stp-util.md)
 - [Path auth](/guide/path-auth.md)
 - [Permissions and macros](/guide/permission-matching.md)
+- [Security features](/guide/security-features.md)

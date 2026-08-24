@@ -268,8 +268,9 @@
 //!     {
 //!         let mut conn = self.client.get_async_connection().await?;
 //!         let key = format!("distributed:session:{}", session.session_id);
-//!         let value = serde_json::to_string(&session)?;
-//!         
+//!         // Prefer SharedSerializer / SaTokenConfig::encode (A2), not hardcoded JSON.
+//!         // 优先用 SharedSerializer / SaTokenConfig::encode（A2），勿硬编码 JSON。
+//!         let value = serializer.encode(&session)?;
 //!         if let Some(ttl) = ttl {
 //!             conn.set_ex(&key, value, ttl.as_secs() as usize).await?;
 //!         } else {

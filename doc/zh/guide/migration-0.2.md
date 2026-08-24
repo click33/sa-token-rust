@@ -61,16 +61,20 @@ SaTokenConfig::builder()
 
 在响应路径调用 `write_token_cookie`；登出用 `delete_token_cookie`。开关为 `false`（默认）时二者为空操作。
 
+### 可插拔存储编码（`SaSerializer`）
+
+TokenInfo、Session、Nonce、OAuth2/SSO 等存储载荷经 `SaTokenConfig.serializer`（`SharedSerializer`）。默认 JSON。可选二进制需 Cargo feature `fory`，并 `.serializer(SharedSerializer::from(ForySerializer::default()))`。Fory 仍可**读取**存量纯 JSON（滚动升级）；若已有二进制行再切回 JSON，会因格式不匹配失败。完整说明：[存储](./storage.md)。
+
 ## 已移除与替代
 
-| 已移除 | 替代 |
-|--------|------|
+| 已移除 / 废弃 | 替代 |
+|---------------|------|
 | `SaStorage::keys` | `SaStorage::scan` 直到 `next_cursor == 0` |
 | 服务直接握 `SaStorage` | `SaTokenDao`（`set_object` / `get_object` / `cas` / `list_*`） |
 | `sa-token-plugin-*-core` | `sa-token-plugin-common`（`SaTokenState`） |
 | `FrameworkAdapter` | `sa_token_adapter::plugin::SaTokenPlugin` |
 | `init_manager` 主路径 | `try_init_manager` → `Result` |
-| `put_stp_logic` / 全局注册 | `SaLogic::new` / `StpUtil::stp_logic` |
+| `put_stp_logic` / 全局注册 | **废弃空操作** — 改用 `SaLogic::new` / `StpUtil::stp_logic`（廉价 Clone 门面，无注册表） |
 | 进程内 OAuth2/SSO `HashMap` | Dao 后端存储 |
 
 ```rust
@@ -84,9 +88,9 @@ use sa_token_plugin_common::SaTokenState;
 
 ## 签名与模块
 
-优先使用 `try_build` / `try_init_manager` / `try_get_manager`。适配器读 token 走 `token_io::read_token`。登录与授权经 `AuthService` / `AuthzService`。多账号用 `login_type` + `SaLogic`。
+优先使用 `try_build` / `try_init_manager` / `try_get_manager`。适配器读 token 走 `token_io::read_token`。登录与授权经 `AuthService` / `AuthzService`。多账号用 `login_type` + `SaLogic`。`StpUtil::login` 固定 default；其他体系用 `login_with_type` / `TokenBuilder` / `SaLogic`。
 
-新增真实路径包括：`dao.rs`、`keys.rs`、`token_io.rs`、`service/`、`stp_logic.rs`、`oauth2/`、`sso/`、`cleanup/`、`sa-token-plugin-common`。Dao **没有** `set_json`；配置错误类型是 `ConfigError`。
+新增真实路径包括：`dao.rs`、`keys.rs`、`token_io.rs`、`codec.rs`、`service/`、`stp_logic.rs`、`oauth2/`、`sso/`、`cleanup/`、`sa-token-plugin-common`。Adapter 增加 `SaSerializer` / `SharedSerializer`。Dao **没有** `set_json`；配置错误类型是 `ConfigError`。
 
 ## 存储能力（简表）
 
@@ -107,8 +111,9 @@ nonce 一次性消费、在线索引、多端列表暂勿依赖 database 后端�
 6. 公开路由改用 `PathAuthConfig::exclude`。
 7. 按需配置 `token_prefix` / `is_write_cookie`。
 8. 重读 OAuth2（密钥哈希、PKCE）与 SSO 票据消费。
-9. `put_stp_logic` → `SaLogic::new` / `StpUtil::stp_logic`。
-10. `cargo check --workspace`，再 `cargo clippy --workspace --lib`。
+9. `put_stp_logic` → `SaLogic::new` / `StpUtil::stp_logic`（注册表已取消；旧 API 为空操作）。
+10. 若需非 JSON 存储编码，启用 `fory` 并设置 `.serializer(...)` — 见 [存储](/zh/guide/storage.md)。
+11. `cargo check --workspace`，再 `cargo clippy --workspace --lib`。
 
 ## 相关链接
 

@@ -43,6 +43,88 @@ For libraries, prefer `SaTokenConfig::builder().storage(...).try_build()?` then 
 
 ---
 
+## Pluggable serialization (`SaSerializer`)
+
+Domain objects written to storage (token info, sessions, nonce records, OAuth2/SSO payloads, and so on) go through a pluggable serializer on `SaTokenConfig`. Call sites should use `SharedSerializer` (a Clone-friendly enum). The default is JSON; optional binary encoding is available behind the `fory` feature.
+
+### Defaults and when to switch
+
+| Choice | When |
+|--------|------|
+| **JSON** (default) | Compatible with existing 0.1 / early 0.2 data; human-readable in Redis CLI |
+| **fory** (`feature = "fory"`) | Smaller payloads / less Redis string noise; rolling upgrade still reads legacy JSON |
+
+You do **not** need to change anything for a normal install: omit `.serializer(...)` and keep JSON.
+
+### Inject via builder
+
+Types are re-exported from `sa-token-core` (and from the root `sa-token` / plugin crates when features allow):
+
+```rust
+use sa_token_adapter::{JsonSerializer, JsonSerializerConfig};
+use sa_token_core::{SaTokenConfig, SharedSerializer};
+use sa_token_storage_memory::MemoryStorage;
+use std::sync::Arc;
+
+// Default JSON — explicit form
+let manager = SaTokenConfig::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .serializer(SharedSerializer::Json(JsonSerializer::default()))
+    .try_build()?;
+
+// Pretty JSON for local debugging only (do not use in production)
+let debug = SharedSerializer::Json(JsonSerializer::with_config(JsonSerializerConfig {
+    pretty_print: true,
+    ..Default::default()
+}));
+```
+
+### Optional fory (binary)
+
+Enable the feature on the crate you depend on:
+
+```toml
+# root meta-crate
+sa-token = { version = "0.2.0", features = ["fory"] }
+
+# or core / adapter directly
+sa-token-core = { version = "0.2.0", features = ["fory"] }
+```
+
+```rust
+#[cfg(feature = "fory")]
+use sa_token_core::{ForySerializer, SaTokenConfig, SharedSerializer};
+use sa_token_storage_memory::MemoryStorage;
+use std::sync::Arc;
+
+#[cfg(feature = "fory")]
+let manager = SaTokenConfig::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .serializer(SharedSerializer::from(ForySerializer::default()))
+    .try_build()?;
+```
+
+Binary string payloads are prefixed with magic `\u{0001}STF` (`BINARY_MAGIC`) so the read path can tell formats apart.
+
+### Rolling upgrade semantics
+
+| Active serializer | Reading legacy pure JSON | Reading magic-prefixed binary |
+|-------------------|--------------------------|-------------------------------|
+| JSON | OK | `FormatMismatch` → surfaces as `SaTokenError::SerializationError` |
+| fory | OK (legacy path) | OK |
+
+Practical rollout: keep writing JSON until all nodes can enable `fory`, then switch writers; leave fory readers on until old JSON rows expire or are rewritten. Switching **back** to JSON while binary rows remain will fail decode with a format mismatch — migrate or wait for TTL first.
+
+### Errors
+
+`SerializerError` (`EncodeFailed` / `DecodeFailed` / `FormatMismatch` / `VersionIncompatible`) maps into `SaTokenError::SerializationError(String)` via `Display`. See [Error reference](../reference/error-reference.md).
+
+### Trait overview
+
+`SaSerializer` exposes `name` / `kind` / `encode` / `decode`, plus optional `encode_bytes` / `decode_bytes`. Prefer configuring through `SaTokenConfigBuilder::serializer`; application code rarely calls the trait directly.
+
+---
+
 ## MemoryStorage
 
 Best for development, tests, and single-process non-persistent setups.
@@ -140,3 +222,5 @@ Custom backends: implement `SaStorage` from `sa-token-adapter` and inject with `
 - [Quick start](./quick-start.md)
 - [Adapters](./adapter.md)
 - [Framework integration](./framework-integration.md)
+- [Migrate to 0.2](./migration-0.2.md)
+- [Error reference](../reference/error-reference.md)
