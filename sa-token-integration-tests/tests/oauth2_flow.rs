@@ -4,9 +4,7 @@ mod common;
 
 use async_trait::async_trait;
 use common::setup;
-use sa_token_core::oauth2::{
-    CodeChallengeMethod, OAuth2Client, OAuth2Manager, PkceChallenge,
-};
+use sa_token_core::oauth2::{CodeChallengeMethod, OAuth2Client, OAuth2Manager, PkceChallenge};
 use sa_token_core::{PasswordVerifier, SaTokenError};
 use std::sync::Arc;
 

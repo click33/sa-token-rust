@@ -9,8 +9,8 @@ use common::setup;
 use sa_token_adapter::SaRequest;
 use sa_token_core::router::PathAuthConfig;
 use sa_token_plugin_tonic::{
-    GrpcServerInterceptor, SaTokenGrpcPath, SaTokenLoginId, SaTokenState,
-    TonicCapturedRequest, check_permission, get_login_id_from_request,
+    GrpcServerInterceptor, SaTokenGrpcPath, SaTokenLoginId, SaTokenState, TonicCapturedRequest,
+    check_permission, get_login_id_from_request,
 };
 use tonic::Request;
 use tonic::service::Interceptor;
@@ -89,8 +89,7 @@ async fn test_get_login_id_from_request_reads_typed_extension() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_interceptor_rejects_without_authorization() {
     let state = test_state();
-    let mut interceptor =
-        GrpcServerInterceptor::with_path_auth(state, protected_path_config());
+    let mut interceptor = GrpcServerInterceptor::with_path_auth(state, protected_path_config());
 
     let req = grpc_request("/auth.AuthService/GetUserInfo", None);
     let err = interceptor
@@ -102,8 +101,7 @@ async fn test_interceptor_rejects_without_authorization() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_interceptor_allows_excluded_path_without_token() {
     let state = test_state();
-    let mut interceptor =
-        GrpcServerInterceptor::with_path_auth(state, protected_path_config());
+    let mut interceptor = GrpcServerInterceptor::with_path_auth(state, protected_path_config());
 
     let req = grpc_request("/auth.AuthService/HealthCheck", None);
     let out = interceptor
@@ -118,8 +116,7 @@ async fn test_interceptor_injects_login_id_with_authorization_bearer() {
     let id = setup::unique_login_id("tonic_user");
     let token = state.manager.login(&id).await.expect("login");
 
-    let mut interceptor =
-        GrpcServerInterceptor::with_path_auth(state, protected_path_config());
+    let mut interceptor = GrpcServerInterceptor::with_path_auth(state, protected_path_config());
     let req = grpc_request(
         "/auth.AuthService/GetUserInfo",
         Some(&format!("Bearer {}", token.as_str())),
@@ -127,15 +124,20 @@ async fn test_interceptor_injects_login_id_with_authorization_bearer() {
     let out = interceptor
         .call(req)
         .expect("valid Authorization must pass");
-    assert_eq!(get_login_id_from_request(&out).as_deref(), Some(id.as_str()));
-    assert_ne!(get_login_id_from_request(&out).as_deref(), Some(token.as_str()));
+    assert_eq!(
+        get_login_id_from_request(&out).as_deref(),
+        Some(id.as_str())
+    );
+    assert_ne!(
+        get_login_id_from_request(&out).as_deref(),
+        Some(token.as_str())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn test_interceptor_rejects_invalid_token() {
     let state = test_state();
-    let mut interceptor =
-        GrpcServerInterceptor::with_path_auth(state, protected_path_config());
+    let mut interceptor = GrpcServerInterceptor::with_path_auth(state, protected_path_config());
 
     let req = grpc_request(
         "/auth.AuthService/GetUserInfo",
@@ -157,8 +159,7 @@ async fn test_interceptor_rejects_expired_token() {
     let token = mgr.login(&id).await.expect("login");
     setup::expire_token(&mgr, &token).await;
 
-    let mut interceptor =
-        GrpcServerInterceptor::with_path_auth(state, protected_path_config());
+    let mut interceptor = GrpcServerInterceptor::with_path_auth(state, protected_path_config());
     let req = grpc_request(
         "/auth.AuthService/GetUserInfo",
         Some(&format!("Bearer {}", token.as_str())),

@@ -60,7 +60,9 @@ async fn test_add_permission_no_duplicate() {
     let id = setup::unique_login_id("add_p");
     let _mgr = setup::shared_manager();
     StpUtil::add_permission(&id, "api:list").await.expect("add");
-    StpUtil::add_permission(&id, "api:list").await.expect("add2");
+    StpUtil::add_permission(&id, "api:list")
+        .await
+        .expect("add2");
     let perms = StpUtil::get_permissions(&id).await;
     assert_eq!(perms.iter().filter(|p| *p == "api:list").count(), 1);
 }

@@ -33,7 +33,11 @@ async fn untie_disable_allows_login_again() {
     mgr.disable(&id, 60).await.expect("disable");
     assert!(mgr.is_disable_level(&id, "login", 1).await.expect("is"));
     mgr.untie_disable(&id, "login").await.expect("untie");
-    assert!(!mgr.is_disable_level(&id, "login", 1).await.expect("cleared"));
+    assert!(
+        !mgr.is_disable_level(&id, "login", 1)
+            .await
+            .expect("cleared")
+    );
     let token = mgr.login(&id).await.expect("login after untie");
     assert!(mgr.is_valid(&token).await);
 }

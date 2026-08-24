@@ -3,8 +3,8 @@
 mod common;
 
 use common::setup;
-use sa_token_core::online::{InMemoryPusher, OnlineManager};
 use sa_token_core::SaTokenManager;
+use sa_token_core::online::{InMemoryPusher, OnlineManager};
 use sa_token_storage_memory::MemoryStorage;
 use std::sync::Arc;
 
@@ -14,12 +14,15 @@ async fn test_login_marks_online_kick_marks_offline() {
     let pusher = Arc::new(InMemoryPusher::new());
     let online_mgr = Arc::new(OnlineManager::new());
     online_mgr.register_pusher(pusher.clone()).await;
-    let mgr =
-        SaTokenManager::new(storage, setup::default_config()).with_online_manager(online_mgr.clone());
+    let mgr = SaTokenManager::new(storage, setup::default_config())
+        .with_online_manager(online_mgr.clone());
 
     let token = mgr.login("online_user").await.expect("login");
     assert!(
-        online_mgr.is_online("online_user").await.expect("is_online"),
+        online_mgr
+            .is_online("online_user")
+            .await
+            .expect("is_online"),
         "login must mark_online"
     );
     let sessions = online_mgr
@@ -28,9 +31,7 @@ async fn test_login_marks_online_kick_marks_offline() {
         .expect("sessions");
     assert!(sessions.iter().any(|s| s.token == token.as_str()));
 
-    mgr.kick_out("default", "online_user")
-        .await
-        .expect("kick");
+    mgr.kick_out("default", "online_user").await.expect("kick");
     assert!(
         !online_mgr
             .is_online("online_user")

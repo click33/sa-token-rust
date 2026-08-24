@@ -124,9 +124,7 @@ async fn test_stp_util_set_get_session_value() {
     StpUtil::set_session_value(&id, "theme", "dark")
         .await
         .expect("set");
-    let theme: Option<String> = StpUtil::get_session_value(&id, "theme")
-        .await
-        .expect("get");
+    let theme: Option<String> = StpUtil::get_session_value(&id, "theme").await.expect("get");
     assert_eq!(theme.as_deref(), Some("dark"));
 }
 

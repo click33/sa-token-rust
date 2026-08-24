@@ -3,7 +3,9 @@
 mod common;
 
 use common::setup;
-use sa_token_core::{RefreshTokenManager, SaTokenConfig, SaTokenError, config::TokenStyle, keys::LOGIN_TYPE_DEFAULT};
+use sa_token_core::{
+    RefreshTokenManager, SaTokenConfig, SaTokenError, config::TokenStyle, keys::LOGIN_TYPE_DEFAULT,
+};
 
 #[tokio::test]
 async fn test_login_refresh_invalidates_old_access() {

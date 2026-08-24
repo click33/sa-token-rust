@@ -496,7 +496,11 @@ impl SaTokenManager {
 
     /// Set per-token idle timeout. Errors unless `dynamic_active_timeout` is on.
     /// 设置单 token 闲置超时。未开启 `dynamic_active_timeout` 时返回 ConfigError。
-    pub async fn update_active_timeout(&self, token: &TokenValue, seconds: i64) -> SaTokenResult<()> {
+    pub async fn update_active_timeout(
+        &self,
+        token: &TokenValue,
+        seconds: i64,
+    ) -> SaTokenResult<()> {
         if !self.config.dynamic_active_timeout {
             return Err(SaTokenError::ConfigError(
                 "dynamic_active_timeout is disabled".into(),

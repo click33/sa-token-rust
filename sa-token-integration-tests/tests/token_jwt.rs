@@ -225,9 +225,7 @@ async fn test_jwt_decode_without_validation() {
     let mut claims = JwtClaims::new("user_raw");
     claims.set_expiration(3600);
     let token = jwt_mgr.generate(&claims).expect("generate");
-    let decoded = jwt_mgr
-        .decode_without_validation(&token)
-        .expect("decode");
+    let decoded = jwt_mgr.decode_without_validation(&token).expect("decode");
     assert_eq!(decoded.login_id, "user_raw");
 }
 

@@ -710,10 +710,7 @@ mod tests {
             .set(&key, "v1", Some(Duration::from_secs(30)))
             .await
             .expect("set");
-        assert_eq!(
-            storage.get(&key).await.expect("get").as_deref(),
-            Some("v1")
-        );
+        assert_eq!(storage.get(&key).await.expect("get").as_deref(), Some("v1"));
         let ttl = storage.ttl(&key).await.expect("ttl");
         assert!(ttl.is_some());
         let secs = ttl.unwrap().as_secs();

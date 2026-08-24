@@ -141,10 +141,7 @@ async fn test_terminal_index_monotonic() {
     assert!(admin.is_valid(&t2).await);
     assert!(admin.is_valid(&t3).await);
 
-    let terminals = admin
-        .get_terminal_list("10001", None)
-        .await
-        .expect("list");
+    let terminals = admin.get_terminal_list("10001", None).await.expect("list");
     assert_eq!(terminals[0].index, 1);
     assert_eq!(terminals[1].index, 2);
     assert_eq!(terminals[2].index, 3);
@@ -152,10 +149,7 @@ async fn test_terminal_index_monotonic() {
     admin.logout(&t2).await.expect("logout t2");
     let t4 = admin.login("10001").await.expect("t4");
 
-    let terminals = admin
-        .get_terminal_list("10001", None)
-        .await
-        .expect("list2");
+    let terminals = admin.get_terminal_list("10001", None).await.expect("list2");
     let t4_terminal = terminals
         .iter()
         .find(|t| t.token_value == t4.as_str())

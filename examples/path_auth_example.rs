@@ -23,9 +23,7 @@ use std::sync::Arc;
 use sa_token_adapter::context::SaRequest;
 use sa_token_core::{
     SaTokenConfig, StpUtil,
-    router::{
-        PathAuthConfig, match_path, need_auth, process_auth, run_auth_flow,
-    },
+    router::{PathAuthConfig, match_path, need_auth, process_auth, run_auth_flow},
 };
 use sa_token_storage_memory::MemoryStorage;
 
@@ -135,10 +133,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  /health     need_auth = {}", path_cfg.check("/health"));
     println!("  /api/login  need_auth = {}", path_cfg.check("/api/login"));
     println!("  /api/me     need_auth = {}", path_cfg.check("/api/me"));
-    println!(
-        "  /public/a   need_auth = {}",
-        path_cfg.check("/public/a")
-    );
+    println!("  /public/a   need_auth = {}", path_cfg.check("/public/a"));
 
     let token = StpUtil::login("user_10001").await?;
     println!("  logged in as user_10001, token = {token}");

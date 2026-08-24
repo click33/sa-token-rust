@@ -60,7 +60,10 @@ fn request_with_bearer_token(uri: &str, token: &str) -> Request<Body> {
 }
 
 fn request_without_token(uri: &str) -> Request<Body> {
-    Request::builder().uri(uri).body(Body::empty()).expect("request")
+    Request::builder()
+        .uri(uri)
+        .body(Body::empty())
+        .expect("request")
 }
 
 /// 回显 extensions 中的 login_id；无则 `no_login`。

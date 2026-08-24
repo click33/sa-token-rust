@@ -5,7 +5,7 @@ mod common;
 use async_trait::async_trait;
 use common::setup;
 use sa_token_core::{
-    LogoutMode, SaTokenConfig, SaTokenError, SaTokenManager, StpInterface, StpUtil,
+    LogoutMode, SaTokenConfig, SaTokenManager, StpInterface, StpUtil,
 };
 use sa_token_storage_memory::MemoryStorage;
 use std::sync::Arc;

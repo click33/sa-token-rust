@@ -3,8 +3,8 @@
 mod common;
 
 use common::setup;
-use sa_token_core::temp_token::TempTokenManager;
 use sa_token_core::SaTokenError;
+use sa_token_core::temp_token::TempTokenManager;
 
 #[tokio::test]
 async fn test_temp_token_create_parse_delete() {
@@ -48,13 +48,14 @@ async fn test_temp_token_expired_via_clock() {
         .expect("create");
     // 灰盒：把 expire_at 拨到过去
     let key = mgr.keys().temp_token("ns", &token);
-    let mut rec: sa_token_core::temp_token::TempTokenRecord =
-        mgr.dao().get_object(&key).await.expect("get").expect("some");
-    rec.expire_at = Some(chrono::Utc::now() - chrono::Duration::seconds(5));
-    mgr.dao()
-        .set_object(&key, &rec, None)
+    let mut rec: sa_token_core::temp_token::TempTokenRecord = mgr
+        .dao()
+        .get_object(&key)
         .await
-        .expect("set");
+        .expect("get")
+        .expect("some");
+    rec.expire_at = Some(chrono::Utc::now() - chrono::Duration::seconds(5));
+    mgr.dao().set_object(&key, &rec, None).await.expect("set");
     assert!(matches!(
         temp.parse("ns", &token).await,
         Err(SaTokenError::TempTokenExpired)

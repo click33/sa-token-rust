@@ -3,7 +3,7 @@
 mod common;
 
 use common::setup;
-use sa_token_core::{http_basic, same_token, SaTokenContext, SaTokenError};
+use sa_token_core::{SaTokenContext, SaTokenError, http_basic, same_token};
 
 #[tokio::test]
 async fn test_http_basic_decode_and_ct_eq() {

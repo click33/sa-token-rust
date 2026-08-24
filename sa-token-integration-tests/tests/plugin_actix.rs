@@ -200,7 +200,8 @@ async fn test_path_auth_middleware_include_exclude() {
             .wrap(SaTokenMiddleware::with_path_auth(state, path))
             .route(
                 "/api/user",
-                web::get().to(|ext: LoginIdExtractor| async move { HttpResponse::Ok().body(ext.0) }),
+                web::get()
+                    .to(|ext: LoginIdExtractor| async move { HttpResponse::Ok().body(ext.0) }),
             )
             .route(
                 "/api/public/info",
@@ -217,7 +218,9 @@ async fn test_path_auth_middleware_include_exclude() {
         .expect_err("include path without token must reject");
     assert_eq!(err.as_response_error().status_code(), 401);
 
-    let req = test::TestRequest::get().uri("/api/public/info").to_request();
+    let req = test::TestRequest::get()
+        .uri("/api/public/info")
+        .to_request();
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
     let body = test::read_body(resp).await;
