@@ -28,10 +28,10 @@ English: This plugin provides authentication and authorization support for gRPC 
 
 ```toml
 [dependencies]
-sa-token-plugin-tonic = "0.1.15"
+sa-token-plugin-tonic = "0.2.0"
 
 # 或使用 Redis 存储 | Or with Redis storage
-sa-token-plugin-tonic = { version = "0.1.15", features = ["redis"] }
+sa-token-plugin-tonic = { version = "0.2.0", features = ["redis"] }
 ```
 
 ### 特性说明 | Features

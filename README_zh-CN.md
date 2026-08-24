@@ -168,7 +168,7 @@ sa-token-rust/
 ```toml
 [dependencies]
 # 一站式包 - 包含核心、宏和存储
-sa-token-plugin-axum = "0.1.18"  # 默认：内存存储
+sa-token-plugin-axum = "0.2.0"  # 默认：内存存储
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 ```
@@ -187,13 +187,13 @@ use sa_token_plugin_axum::*;  // ✨ 你需要的一切！
 **通过 features 选择存储后端：**
 ```toml
 # Redis 存储
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 
 # 多个存储后端
-sa-token-plugin-axum = { version = "0.1.18", features = ["memory", "redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["memory", "redis"] }
 
 # 所有存储后端
-sa-token-plugin-axum = { version = "0.1.18", features = ["full"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["full"] }
 ```
 
 **可用的 features：**
@@ -224,16 +224,16 @@ sa-token-plugin-axum = { version = "0.1.18", features = ["full"] }
 
 ```toml
 # Axum 0.8 + Redis
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 
 # Actix-web 4.x 门面（默认 v4 + memory）+ Redis
-sa-token-plugin-actix-web = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-actix-web = { version = "0.2.0", features = ["redis"] }
 
 # Rocket 0.5 / Salvo / Ntex / Gotham — 默认已与当前支持线对齐
-sa-token-plugin-rocket = "0.1.18"
-sa-token-plugin-salvo = "0.1.18"
-sa-token-plugin-ntex = "0.1.18"
-sa-token-plugin-gotham = "0.1.18"
+sa-token-plugin-rocket = "0.2.0"
+sa-token-plugin-salvo = "0.2.0"
+sa-token-plugin-ntex = "0.2.0"
+sa-token-plugin-gotham = "0.2.0"
 ```
 
 然后：`use sa_token_plugin_<下划线 crate 名>::*;`
@@ -246,9 +246,9 @@ sa-token-plugin-gotham = "0.1.18"
 
 ```toml
 [dependencies]
-sa-token-core = "0.1.18"
-sa-token-storage-memory = "0.1.18"
-sa-token-plugin-axum = "0.1.18"
+sa-token-core = "0.2.0"
+sa-token-storage-memory = "0.2.0"
+sa-token-plugin-axum = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 ```
@@ -283,7 +283,7 @@ async fn main() {
 **添加 Redis feature 到依赖：**
 ```toml
 [dependencies]
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 ```
 
 **使用简化导入：**

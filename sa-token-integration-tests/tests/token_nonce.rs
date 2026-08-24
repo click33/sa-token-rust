@@ -8,7 +8,6 @@ mod common;
 use common::setup;
 use sa_token_adapter::SaStorage;
 use sa_token_core::{NonceManager, SaTokenConfig, SaTokenError, config::TokenStyle};
-use std::sync::Arc;
 
 #[tokio::test]
 async fn test_nonce_generate_unique() {

@@ -3,9 +3,7 @@
 mod common;
 
 use common::setup;
-use sa_token_core::{
-    JwtAlgorithm, JwtClaims, JwtManager, SaTokenConfig, SaTokenError, config::TokenStyle,
-};
+use sa_token_core::{JwtAlgorithm, JwtClaims, JwtManager, SaTokenConfig, config::TokenStyle};
 
 const TEST_SECRET: &str = "test-secret-key-for-jwt-minimum-32-chars-long";
 

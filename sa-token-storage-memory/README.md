@@ -13,7 +13,7 @@ In-memory storage implementation for sa-token-rust.
 
 ```toml
 [dependencies]
-sa-token-storage-memory = "0.1.2"
+sa-token-storage-memory = "0.2.0"
 ```
 
 ## Usage

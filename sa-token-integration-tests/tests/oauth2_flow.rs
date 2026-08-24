@@ -54,7 +54,7 @@ fn client_confidential() -> OAuth2Client {
 #[tokio::test]
 async fn test_authorization_code_exchange_and_second_use_fails() {
     let mgr = OAuth2Manager::new(setup::memory_storage()).with_ttl(60, 3600, 86400);
-    let mut client = client_confidential();
+    let client = client_confidential();
     mgr.register_client_with_secret(client.clone(), "secret")
         .await
         .expect("register");

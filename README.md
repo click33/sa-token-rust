@@ -141,7 +141,7 @@ All plugins provide:
 ```toml
 [dependencies]
 # All-in-one package - includes core, macros, and storage
-sa-token-plugin-axum = "0.1.18"  # Default: memory storage
+sa-token-plugin-axum = "0.2.0"  # Default: memory storage
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 ```
@@ -160,13 +160,13 @@ use sa_token_plugin_axum::*;  // ✨ Everything you need!
 **Choose your storage backend with features:**
 ```toml
 # Redis storage
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 
 # Multiple storage backends
-sa-token-plugin-axum = { version = "0.1.18", features = ["memory", "redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["memory", "redis"] }
 
 # All storage backends
-sa-token-plugin-axum = { version = "0.1.18", features = ["full"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["full"] }
 ```
 
 **Available features:**
@@ -197,16 +197,16 @@ sa-token-plugin-axum = { version = "0.1.18", features = ["full"] }
 
 ```toml
 # Axum 0.8 + Redis
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 
 # Actix-web 4.x façade (default v4 + memory) + Redis
-sa-token-plugin-actix-web = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-actix-web = { version = "0.2.0", features = ["redis"] }
 
 # Rocket 0.5 / Salvo / Ntex / Gotham — defaults match current supported lines
-sa-token-plugin-rocket = "0.1.18"
-sa-token-plugin-salvo = "0.1.18"
-sa-token-plugin-ntex = "0.1.18"
-sa-token-plugin-gotham = "0.1.18"
+sa-token-plugin-rocket = "0.2.0"
+sa-token-plugin-salvo = "0.2.0"
+sa-token-plugin-ntex = "0.2.0"
+sa-token-plugin-gotham = "0.2.0"
 ```
 
 Then: `use sa_token_plugin_<crate_name_with_underscores>::*;`
@@ -219,9 +219,9 @@ If you prefer fine-grained control, you can still import packages separately:
 
 ```toml
 [dependencies]
-sa-token-core = "0.1.18"
-sa-token-storage-memory = "0.1.18"
-sa-token-plugin-axum = "0.1.18"
+sa-token-core = "0.2.0"
+sa-token-storage-memory = "0.2.0"
+sa-token-plugin-axum = "0.2.0"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 ```
@@ -256,7 +256,7 @@ async fn main() {
 **Add Redis feature to your dependency:**
 ```toml
 [dependencies]
-sa-token-plugin-axum = { version = "0.1.18", features = ["redis"] }
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
 ```
 
 **With simplified import:**

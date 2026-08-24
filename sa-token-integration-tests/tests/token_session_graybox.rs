@@ -1,5 +1,4 @@
 use common::setup;
-use sa_token_adapter::SaStorage;
 use sa_token_core::SaTokenConfig;
 
 mod common;
