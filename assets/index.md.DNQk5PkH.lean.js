@@ -1,0 +1,1 @@
+import{_ as a,o as t,c as o,ag as s}from"./chunks/framework.DCk0k6gb.js";const h=JSON.parse('{"title":"sa-token-rust","description":"","frontmatter":{},"headers":[],"relativePath":"index.md","filePath":"index.md"}'),n={name:"index.md"};function r(i,e,c,d,l,p){return t(),o("div",null,[...e[0]||(e[0]=[s("",19)])])}const m=a(n,[["render",r]]);export{h as __pageData,m as default};
