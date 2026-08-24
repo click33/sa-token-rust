@@ -12,7 +12,7 @@ Adapter layer for sa-token-rust framework integration.
 
 ```toml
 [dependencies]
-sa-token-adapter = "0.1.13"
+sa-token-adapter = "0.2.0"
 async-trait = "0.1"
 ```
 
@@ -20,7 +20,7 @@ async-trait = "0.1"
 
 ### SaStorage
 
-Storage interface for tokens and sessions:
+Storage interface for tokens and sessions. Prefer calling through `SaTokenDao` in application code — do not bypass Dao in services.
 
 ```rust
 #[async_trait]
@@ -28,7 +28,9 @@ pub trait SaStorage: Send + Sync {
     async fn get(&self, key: &str) -> StorageResult<Option<String>>;
     async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> StorageResult<()>;
     async fn delete(&self, key: &str) -> StorageResult<()>;
-    // ... more methods
+    async fn get_del(&self, key: &str) -> StorageResult<Option<String>>;
+    async fn scan(&self, pattern: &str, cursor: u64, limit: usize) -> StorageResult<ScanPage>;
+    // … CAS, list_*, set_if_absent — see SaStorage in this crate
 }
 ```
 

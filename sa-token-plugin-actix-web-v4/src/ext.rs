@@ -2,7 +2,7 @@
 
 use actix_web::web::Data;
 
-use sa_token_plugin_actix_web_core::SaTokenState;
+use sa_token_plugin_common::SaTokenState;
 
 pub type SaTokenData = Data<SaTokenState>;
 

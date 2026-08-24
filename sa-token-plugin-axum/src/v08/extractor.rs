@@ -1,16 +1,16 @@
 // Author: 金书记
 //
-//! Axum 0.8 extractors.
+//! Axum 0.8 extractors using common rejection helpers.
 
-use axum_08 as axum;
 use axum::{
-    extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::FromRequestParts,
+    http::{StatusCode, request::Parts},
+    response::{IntoResponse, Response},
 };
-use sa_token_core::{error::messages, token::TokenValue};
-use serde_json::json;
+use axum_08 as axum;
+use sa_token_core::token::TokenValue;
+use sa_token_plugin_common::{SaLoginId, unauthorized_json};
 
 pub struct SaTokenExtractor(pub TokenValue);
 
@@ -20,14 +20,7 @@ impl<S: Send + Sync> FromRequestParts<S> for SaTokenExtractor {
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         match parts.extensions.get::<TokenValue>() {
             Some(token) => Ok(SaTokenExtractor(token.clone())),
-            None => Err((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "code": 401,
-                    "message": messages::AUTH_ERROR
-                })),
-            )
-                .into_response()),
+            None => Err((StatusCode::UNAUTHORIZED, Json(unauthorized_json())).into_response()),
         }
     }
 }
@@ -49,16 +42,9 @@ impl<S: Send + Sync> FromRequestParts<S> for LoginIdExtractor {
     type Rejection = Response;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        match parts.extensions.get::<String>() {
-            Some(login_id) => Ok(LoginIdExtractor(login_id.clone())),
-            None => Err((
-                StatusCode::UNAUTHORIZED,
-                Json(json!({
-                    "code": 401,
-                    "message": messages::AUTH_ERROR
-                })),
-            )
-                .into_response()),
+        match parts.extensions.get::<SaLoginId>() {
+            Some(id) => Ok(LoginIdExtractor(id.0.clone())),
+            None => Err((StatusCode::UNAUTHORIZED, Json(unauthorized_json())).into_response()),
         }
     }
 }

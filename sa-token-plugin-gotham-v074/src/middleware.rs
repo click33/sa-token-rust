@@ -9,15 +9,14 @@
 //! - `SaCheckRoleMiddleware`：检查角色中间件，无角色时返回403错误
 //! - `AuthMiddleware`：已废弃，建议使用上述中间件
 
-use gotham::state::{State, StateData};
-use gotham::middleware::Middleware;
 use gotham::handler::HandlerFuture;
-use gotham::hyper::{Response, StatusCode};
 use gotham::hyper::body::Body;
+use gotham::hyper::{Response, StatusCode};
+use gotham::middleware::Middleware;
+use gotham::state::{State, StateData};
+use sa_token_core::{StpUtil, router::run_auth_flow};
+use sa_token_plugin_common::{SaTokenState, rejection};
 use std::pin::Pin;
-use serde_json::json;
-use sa_token_core::{error::messages, StpUtil};
-use sa_token_plugin_gotham_core::{run_auth_flow, SaTokenState};
 
 use crate::adapter::GothamCapturedRequest;
 use crate::wrapper::{LoginIdWrapper, TokenValueWrapper};
@@ -28,7 +27,7 @@ use crate::wrapper::{LoginIdWrapper, TokenValueWrapper};
 pub struct LoginId(pub String);
 
 /// sa-token 基础中间件 - 提取并验证 token
-/// 
+///
 /// 此中间件会从请求中提取 token，验证其有效性，并将相关信息存储到 State 中
 #[derive(Clone)]
 pub struct SaTokenMiddleware {
@@ -47,7 +46,7 @@ impl Middleware for SaTokenMiddleware {
         Chain: FnOnce(State) -> Pin<Box<HandlerFuture>> + Send + 'static,
     {
         let token_state = self.state.clone();
-        
+
         Box::pin(async move {
             let token_name = token_state.manager.config.token_name.as_str();
             let adapter = GothamCapturedRequest::capture(&state, token_name);
@@ -67,7 +66,7 @@ impl Middleware for SaTokenMiddleware {
 
 /// 中文 | English
 /// 认证中间件 - 验证用户登录状态 | Authentication middleware - verify user login status
-/// 
+///
 /// 注意：此中间件已废弃，建议使用 SaTokenMiddleware + SaCheckLoginMiddleware
 #[deprecated(note = "Use SaTokenMiddleware + SaCheckLoginMiddleware instead")]
 #[derive(Clone)]
@@ -103,7 +102,7 @@ impl Default for AuthMiddleware {
 }
 
 /// sa-token 登录检查中间件 - 强制要求登录
-/// 
+///
 /// 此中间件会检查用户是否已登录，如果未登录则返回401错误
 /// 建议与 SaTokenMiddleware 一起使用
 #[derive(Clone)]
@@ -123,23 +122,18 @@ impl Middleware for SaCheckLoginMiddleware {
         Chain: FnOnce(State) -> Pin<Box<HandlerFuture>> + Send + 'static,
     {
         let token_state = self.state.clone();
-        
+
         Box::pin(async move {
             let token_name = token_state.manager.config.token_name.as_str();
             let adapter = GothamCapturedRequest::capture(&state, token_name);
             let flow = run_auth_flow(&adapter, &token_state.manager, None).await;
 
             if flow.token.is_none() || flow.login_id.is_none() {
-                let error_json = json!({
-                    "code": 401,
-                    "message": messages::AUTH_ERROR
-                });
-
                 let response = Response::builder()
                     .status(StatusCode::UNAUTHORIZED)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(error_json.to_string()))
-                    .expect("Unable to create response");
+                    .header("Content-Type", rejection::CONTENT_TYPE_JSON)
+                    .body(Body::from(rejection::unauthorized_json().to_string()))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
 
                 return Ok((state, response));
             }
@@ -157,7 +151,7 @@ impl Middleware for SaCheckLoginMiddleware {
 }
 
 /// sa-token 权限检查中间件 - 强制要求特定权限
-/// 
+///
 /// 此中间件会检查用户是否拥有指定权限，如果没有则返回403错误
 #[derive(Clone)]
 pub struct SaCheckPermissionMiddleware {
@@ -181,38 +175,28 @@ impl Middleware for SaCheckPermissionMiddleware {
     {
         let token_state = self.state.clone();
         let permission = self.permission.clone();
-        
+
         Box::pin(async move {
             let token_name = token_state.manager.config.token_name.as_str();
             let adapter = GothamCapturedRequest::capture(&state, token_name);
             let flow = run_auth_flow(&adapter, &token_state.manager, None).await;
 
             let Some(login_id) = flow.login_id.clone() else {
-                let error_json = json!({
-                    "code": 403,
-                    "message": messages::PERMISSION_REQUIRED
-                });
-
                 let response = Response::builder()
-                    .status(StatusCode::FORBIDDEN)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(error_json.to_string()))
-                    .expect("Unable to create response");
+                    .status(StatusCode::UNAUTHORIZED)
+                    .header("Content-Type", rejection::CONTENT_TYPE_JSON)
+                    .body(Body::from(rejection::unauthorized_json().to_string()))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
 
                 return Ok((state, response));
             };
 
             if !StpUtil::has_permission(&login_id, &permission).await {
-                let error_json = json!({
-                    "code": 403,
-                    "message": messages::PERMISSION_REQUIRED
-                });
-
                 let response = Response::builder()
                     .status(StatusCode::FORBIDDEN)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(error_json.to_string()))
-                    .expect("Unable to create response");
+                    .header("Content-Type", rejection::CONTENT_TYPE_JSON)
+                    .body(Body::from(rejection::forbidden_json(None).to_string()))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
 
                 return Ok((state, response));
             }
@@ -228,7 +212,7 @@ impl Middleware for SaCheckPermissionMiddleware {
 }
 
 /// sa-token 角色检查中间件 - 强制要求特定角色
-/// 
+///
 /// 此中间件会检查用户是否拥有指定角色，如果没有则返回403错误
 #[derive(Clone)]
 pub struct SaCheckRoleMiddleware {
@@ -252,38 +236,28 @@ impl Middleware for SaCheckRoleMiddleware {
     {
         let token_state = self.state.clone();
         let role = self.role.clone();
-        
+
         Box::pin(async move {
             let token_name = token_state.manager.config.token_name.as_str();
             let adapter = GothamCapturedRequest::capture(&state, token_name);
             let flow = run_auth_flow(&adapter, &token_state.manager, None).await;
 
             let Some(login_id) = flow.login_id.clone() else {
-                let error_json = json!({
-                    "code": 403,
-                    "message": messages::ROLE_REQUIRED
-                });
-
                 let response = Response::builder()
-                    .status(StatusCode::FORBIDDEN)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(error_json.to_string()))
-                    .expect("Unable to create response");
+                    .status(StatusCode::UNAUTHORIZED)
+                    .header("Content-Type", rejection::CONTENT_TYPE_JSON)
+                    .body(Body::from(rejection::unauthorized_json().to_string()))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
 
                 return Ok((state, response));
             };
 
             if !StpUtil::has_role(&login_id, &role).await {
-                let error_json = json!({
-                    "code": 403,
-                    "message": messages::ROLE_REQUIRED
-                });
-
                 let response = Response::builder()
                     .status(StatusCode::FORBIDDEN)
-                    .header("Content-Type", "application/json")
-                    .body(Body::from(error_json.to_string()))
-                    .expect("Unable to create response");
+                    .header("Content-Type", rejection::CONTENT_TYPE_JSON)
+                    .body(Body::from(rejection::forbidden_role_json().to_string()))
+                    .unwrap_or_else(|_| Response::new(Body::empty()));
 
                 return Ok((state, response));
             }

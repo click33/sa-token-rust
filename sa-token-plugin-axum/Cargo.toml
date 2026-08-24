@@ -2,6 +2,7 @@
 name = "sa-token-plugin-axum"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -12,13 +13,14 @@ categories.workspace = true
 description = "Axum framework integration for sa-token-rust - All-in-one package"
 
 [dependencies]
-sa-token-core = { version = "0.1.18" }
-sa-token-adapter = { version = "0.1.18" }
-sa-token-macro = { version = "0.1.18" }
+sa-token-core = { workspace = true }
+sa-token-adapter = { workspace = true }
+sa-token-macro = { workspace = true }
+sa-token-plugin-common = { workspace = true }
 
-sa-token-storage-memory = { version = "0.1.18", optional = true }
-sa-token-storage-redis = { version = "0.1.18", optional = true }
-sa-token-storage-database = { version = "0.1.18", optional = true }
+sa-token-storage-memory = { workspace = true, optional = true }
+sa-token-storage-redis = { workspace = true, optional = true }
+sa-token-storage-database = { workspace = true, optional = true }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }
@@ -39,3 +41,10 @@ memory = ["dep:sa-token-storage-memory"]
 redis = ["dep:sa-token-storage-redis"]
 database = ["dep:sa-token-storage-database"]
 full = ["memory", "redis", "database"]
+
+[package.metadata.docs.rs]
+features = ["memory", "redis", "database"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

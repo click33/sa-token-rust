@@ -1,0 +1,24 @@
+[package]
+name = "sa-token-plugin-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Shared plugin primitives for sa-token-rust framework bindings"
+
+[dependencies]
+sa-token-core = { workspace = true }
+sa-token-adapter = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+http = { workspace = true }
+tracing = { workspace = true }
+
+[lints]
+workspace = true

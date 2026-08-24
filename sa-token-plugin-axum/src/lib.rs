@@ -7,6 +7,8 @@
 //! Enable **`axum-08`** (default) for Axum 0.8; dependencies use Cargo keys `axum-08` /
 //! `tower-08` so additional Axum majors can be added later without renaming the crate.
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(not(feature = "axum-08"))]
 compile_error!(
     "sa-token-plugin-axum: enable feature `axum-08` (default). \
@@ -15,8 +17,9 @@ compile_error!(
 
 pub mod shared;
 
+pub use sa_token_plugin_common as common;
+pub use sa_token_plugin_common::{SaLoginId, SaTokenState, SaTokenStateBuilder};
 pub use shared::adapter::{AxumRequestAdapter, AxumRequestSnapshot, AxumResponseAdapter};
-pub use shared::state::{SaTokenState, SaTokenStateBuilder};
 
 #[cfg(feature = "axum-08")]
 mod v08;
@@ -25,11 +28,11 @@ mod v08;
 pub use v08::{
     LoginIdExtractor, OptionalSaTokenExtractor, SaCheckLoginLayer, SaCheckLoginMiddleware,
     SaCheckPermissionLayer, SaCheckPermissionMiddleware, SaTokenExtractor, SaTokenLayer,
-    SaTokenMiddleware,
+    SaTokenMiddleware, sa_token_error_response,
 };
 
+pub use sa_token_adapter::{self, plugin::SaTokenPlugin, storage::SaStorage};
 pub use sa_token_core::{self, prelude::*};
-pub use sa_token_adapter::{self, framework::FrameworkAdapter, storage::SaStorage};
 pub use sa_token_macro::*;
 
 #[cfg(feature = "memory")]

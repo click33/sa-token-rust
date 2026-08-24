@@ -1,95 +1,88 @@
-# Online User Management & Real-time Push
+# Online user management
 
-## English
+English | [中文](/zh/guide/online-user-management.md)
 
-### Overview
+`OnlineManager` tracks **presence**, not “whether a token exists in storage”. Having a token does not imply online; after a WS disconnect or `mark_offline`, the token may still be valid.
 
-The Online User Management module provides real-time tracking of user online status and message push capabilities. Perfect for building chat applications, live notifications, and real-time collaboration tools.
-
-### Key Features
-
-- **Online Status Tracking** - Track user connections in real-time
-- **Multi-Device Support** - Users can connect from multiple devices
-- **Real-time Push** - Send messages to specific users or broadcast to all
-- **Kick-Out Notifications** - Force logout with notifications
-- **Activity Tracking** - Monitor user activity timestamps
-- **Extensible Pushers** - Implement custom push mechanisms
-
-### Quick Start
+## Local vs distributed
 
 ```rust
-use sa_token_core::{OnlineManager, OnlineUser, InMemoryPusher};
+use sa_token_core::OnlineManager;
 use std::sync::Arc;
-use std::collections::HashMap;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create online manager
-    let manager = Arc::new(OnlineManager::new());
-    
-    // Register message pusher
-    let pusher = Arc::new(InMemoryPusher::new());
-    manager.register_pusher(pusher.clone()).await;
-    
-    // Mark user as online
-    let user = OnlineUser {
-        login_id: "user123".to_string(),
-        token: "token123".to_string(),
-        device: "web".to_string(),
-        connect_time: chrono::Utc::now(),
-        last_activity: chrono::Utc::now(),
-        metadata: HashMap::new(),
-    };
-    manager.mark_online(user).await;
-    
-    // Push message to user
-    manager.push_to_user("user123", "Hello!".to_string()).await?;
-    
-    // Broadcast to all users
-    manager.broadcast("System announcement".to_string()).await?;
-    
-    // Check online status
-    if manager.is_online("user123").await {
-        println!("User is online");
-    }
-    
-    Ok(())
-}
+// In-process
+let online = OnlineManager::local();
+// or OnlineManager::new()
+
+// Multi-instance: share via Dao
+let online = OnlineManager::distributed(manager.dao().clone());
 ```
 
-### API Reference
+Attach to the Manager:
 
-#### OnlineManager Methods
+```rust
+let manager = manager.with_online_manager(Arc::new(online));
+// or manager.with_distributed_online() — builds DistributedOnlineStore from current Dao
+```
 
-- `new()` - Create manager
-- `mark_online(user)` - Mark user online
-- `mark_offline(login_id, token)` - Mark specific session offline
-- `mark_offline_all(login_id)` - Mark all user sessions offline
-- `is_online(login_id)` - Check if user is online
-- `get_online_count()` - Get total online users
-- `get_online_users()` - Get list of online user IDs
-- `push_to_user(login_id, content)` - Push to single user
-- `push_to_users(login_ids, content)` - Push to multiple users
-- `broadcast(content)` - Push to all online users
-- `kick_out_notify(login_id, reason)` - Force logout with notification
+## Mark online / offline
 
-### Message Types
+```rust
+use sa_token_core::OnlineUser;
+use chrono::Utc;
+use std::collections::HashMap;
 
-- `MessageType::Text` - Plain text
-- `MessageType::Binary` - Binary data
-- `MessageType::KickOut` - Logout notification
-- `MessageType::Notification` - System notification
-- `MessageType::Custom(String)` - Custom type
+let user = OnlineUser {
+    login_type: "default".into(),
+    login_id: "user_1".into(),
+    token: token_str.clone(),
+    device: "pc".into(),
+    connect_time: Utc::now(),
+    last_activity: Utc::now(),
+    metadata: HashMap::new(),
+};
+online.mark_online(user).await?;
 
----
+online.is_online("user_1").await?;
+online.get_user_sessions("user_1").await?;
+online.update_activity("user_1", &token_str).await?;
 
-## Related Documentation
+online.mark_offline("user_1", &token_str).await?;
+online.mark_offline_all("user_1").await?;
+```
 
-- [WebSocket Authentication](/guide/websocket-auth.md)
-- [Distributed Session](/guide/distributed-session.md)
-- [Event Listener Guide](/guide/event-listener.md)
+Typed variants: `mark_offline_with_type`, `mark_offline_all_with_type`, `update_activity_with_type`.
 
-## License
+`WsAuthManager::authenticate` calls `mark_online` automatically when an OnlineManager is attached.
 
-MIT OR Apache-2.0
+## Pushing
 
+Implement `MessagePusher`, or use `InMemoryPusher` in tests:
+
+```rust
+use sa_token_core::{InMemoryPusher, MessagePusher, PushMessage};
+use async_trait::async_trait;
+use std::sync::Arc;
+
+online.register_pusher(Arc::new(InMemoryPusher::new())).await;
+
+online.push_to_user("user_1", "hello".into()).await?;
+online.broadcast("maintenance".into()).await?;
+online.kick_out_notify("user_1", "kicked".into()).await?;
+```
+
+Custom pushers implement `MessagePusher::push`, then `register_pusher`.
+
+## Boundaries
+
+| Concept | Meaning |
+|---------|---------|
+| Presence | Connection / session is present (`OnlineManager`) |
+| Token | Login credential still valid (Auth / TokenRepo) |
+| Distributed session | Cross-service business session data (next guide), not presence |
+
+## Related
+
+- [WebSocket auth](/guide/websocket-auth.md)
+- [Distributed session](/guide/distributed-session.md)
+- [Event listeners](/guide/event-listener.md)

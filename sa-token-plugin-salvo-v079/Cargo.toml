@@ -2,20 +2,21 @@
 name = "sa-token-plugin-salvo-v079"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
 description = "Salvo 0.79.x bindings for sa-token-rust"
 
 [dependencies]
-sa-token-plugin-salvo-core = { version = "0.1.18", path = "../sa-token-plugin-salvo-core" }
-sa-token-core = { version = "0.1.18", path = "../sa-token-core" }
-sa-token-adapter = { version = "0.1.18", path = "../sa-token-adapter" }
-sa-token-macro = { version = "0.1.18", path = "../sa-token-macro" }
+sa-token-plugin-common = { workspace = true }
+sa-token-core = { workspace = true }
+sa-token-adapter = { workspace = true }
+sa-token-macro = { workspace = true }
 
-sa-token-storage-memory = { version = "0.1.18", path = "../sa-token-storage-memory", optional = true }
-sa-token-storage-redis = { version = "0.1.18", path = "../sa-token-storage-redis", optional = true }
-sa-token-storage-database = { version = "0.1.18", path = "../sa-token-storage-database", optional = true }
+sa-token-storage-memory = { workspace = true, optional = true }
+sa-token-storage-redis = { workspace = true, optional = true }
+sa-token-storage-database = { workspace = true, optional = true }
 
 tokio = { workspace = true }
 async-trait = { workspace = true }
@@ -27,16 +28,14 @@ http = { workspace = true }
 
 [features]
 default = ["memory"]
-memory = [
-    "dep:sa-token-storage-memory",
-    "sa-token-plugin-salvo-core/memory",
-]
-redis = [
-    "dep:sa-token-storage-redis",
-    "sa-token-plugin-salvo-core/redis",
-]
-database = [
-    "dep:sa-token-storage-database",
-    "sa-token-plugin-salvo-core/database",
-]
+memory = ["dep:sa-token-storage-memory"]
+redis = ["dep:sa-token-storage-redis"]
+database = ["dep:sa-token-storage-database"]
 full = ["memory", "redis", "database"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

@@ -139,7 +139,7 @@ $(date '+%Y-%m-%d %H:%M:%S')
 - [x] `#[sa_check_permission]` - 权限检查
 - [x] `#[sa_check_role]` - 角色检查
 - [x] `#[sa_check_permissions_and]` - 多权限AND检查
-- [x] `#[sa_ignore]` - 忽略认证
+- [x] `#[sa_ignore]` - 仅跳过宏检查；公开路径靠 PathAuthConfig::exclude
 
 ### ✅ StpUtil功能
 - [x] 权限设置和查询

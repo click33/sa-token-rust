@@ -1,5 +1,5 @@
 use ntex::web::{ErrorRenderer, HttpRequest, WebRequest};
-use sa_token_adapter::context::{SaRequest, SaResponse, CookieOptions};
+use sa_token_adapter::context::{CookieOptions, SaRequest, SaResponse};
 use serde::Serialize;
 
 /// 中文: 将 Ntex HttpRequest 封装为 SaRequest 适配器
@@ -20,7 +20,9 @@ impl<'a> SaRequest for NtexRequestAdapter<'a> {
     /// 中文: 读取指定 Header
     /// English: Retrieves specified header value
     fn get_header(&self, name: &str) -> Option<String> {
-        self.request.headers().get(name)
+        self.request
+            .headers()
+            .get(name)
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_string())
     }
@@ -28,36 +30,38 @@ impl<'a> SaRequest for NtexRequestAdapter<'a> {
     /// 中文: 解析 Cookie 并返回指定名称的值
     /// English: Parses cookies and returns the value by name
     fn get_cookie(&self, name: &str) -> Option<String> {
-        self.request.headers().get("cookie")
+        self.request
+            .headers()
+            .get("cookie")
             .and_then(|v| v.to_str().ok())
             .and_then(|cookies| {
-                cookies.split(';')
-                    .find_map(|cookie| {
-                        let mut parts = cookie.trim().splitn(2, '=');
-                        match (parts.next(), parts.next()) {
-                            (Some(k), Some(v)) if k == name => Some(v.to_string()),
-                            _ => None,
-                        }
-                    })
+                cookies.split(';').find_map(|cookie| {
+                    let mut parts = cookie.trim().splitn(2, '=');
+                    match (parts.next(), parts.next()) {
+                        (Some(k), Some(v)) if k == name => Some(v.to_string()),
+                        _ => None,
+                    }
+                })
             })
     }
 
     /// 中文: 支持路径参数和查询参数读取
     /// English: Supports reading both path and query parameters
     fn get_param(&self, name: &str) -> Option<String> {
-        self.request.match_info().get(name)
+        self.request
+            .match_info()
+            .get(name)
             .map(|s| s.to_string())
             .or_else(|| {
-                self.request.query_string()
-                    .split('&')
-                    .find_map(|pair| {
-                        let mut parts = pair.splitn(2, '=');
-                        match (parts.next(), parts.next()) {
-                            (Some(k), Some(v)) if k == name => 
-                                urlencoding::decode(v).ok().map(|s| s.to_string()),
-                            _ => None,
+                self.request.query_string().split('&').find_map(|pair| {
+                    let mut parts = pair.splitn(2, '=');
+                    match (parts.next(), parts.next()) {
+                        (Some(k), Some(v)) if k == name => {
+                            urlencoding::decode(v).ok().map(|s| s.to_string())
                         }
-                    })
+                        _ => None,
+                    }
+                })
             })
     }
 
@@ -76,8 +80,7 @@ impl<'a> SaRequest for NtexRequestAdapter<'a> {
     /// 中文: 提取客户端 IP
     /// English: Extracts client IP address
     fn get_client_ip(&self) -> Option<String> {
-        self.request.peer_addr()
-            .map(|addr| addr.ip().to_string())
+        self.request.peer_addr().map(|addr| addr.ip().to_string())
     }
 }
 
@@ -96,11 +99,11 @@ fn parse_cookie(cookie_str: &str, token_name: &str) -> Option<String> {
 
 fn parse_query_param(query: &str, param_name: &str) -> Option<String> {
     for pair in query.split('&') {
-        let parts: Vec<&str> = pair.splitn(2, '=').collect();
-        if parts.len() == 2 && parts[0] == param_name {
-            return urlencoding::decode(parts[1])
-                .ok()
-                .map(|s| s.into_owned());
+        let mut parts = pair.splitn(2, '=');
+        if let (Some(k), Some(v)) = (parts.next(), parts.next())
+            && k == param_name
+        {
+            return urlencoding::decode(v).ok().map(|s| s.into_owned());
         }
     }
     None
@@ -236,7 +239,8 @@ impl SaResponse for NtexResponseAdapter {
     /// 中文: 写入 Cookie（简单实现，可按需扩展）
     /// English: Stores cookie header (simple implementation, extend as needed)
     fn set_cookie(&mut self, name: &str, value: &str, _options: CookieOptions) {
-        self.headers.push(("Set-Cookie".to_string(), format!("{}={}", name, value)));
+        self.headers
+            .push(("Set-Cookie".to_string(), format!("{}={}", name, value)));
     }
 
     /// 中文: 状态码在 Ntex 响应构建阶段处理
@@ -248,8 +252,8 @@ impl SaResponse for NtexResponseAdapter {
     fn set_json_body<T: Serialize>(&mut self, body: T) -> Result<(), serde_json::Error> {
         let json = serde_json::to_string(&body)?;
         self.body = Some(json);
-        self.headers.push(("Content-Type".to_string(), "application/json".to_string()));
+        self.headers
+            .push(("Content-Type".to_string(), "application/json".to_string()));
         Ok(())
     }
 }
-

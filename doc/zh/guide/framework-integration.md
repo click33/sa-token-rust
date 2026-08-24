@@ -1,410 +1,99 @@
 # 框架集成
 
-[English](/guide/framework-integration.md) | 中文文档
+[English](/guide/framework-integration.md) | 中文
 
-sa-token-rust 通过专用插件包支持 9 个 Web 框架。每个插件提供中间件、提取器和状态管理，具有一致的 API。
+各 Web 插件共享 `sa-token-plugin-common` 里的 `SaTokenState`。中间件走同一套 `run_auth_flow`；读 token 统一经 core 的 `token_io`（Header / Cookie / Body + 可选 `token_prefix`）。
 
-## 支持的框架
+## SaTokenState
 
-| 框架 | 插件包 | Feature（默认） | 绑定 Crate |
-|-----------|---------------|-------------------|---------------|
-| **Axum** | `sa-token-plugin-axum` | `axum-08` | （内部 `v08`） |
-| **Actix-web** | `sa-token-plugin-actix-web` | `v4` | `sa-token-plugin-actix-web-v4` |
-| **Poem** | `sa-token-plugin-poem` | （无） | （直接） |
-| **Rocket** | `sa-token-plugin-rocket` | `v05` | `sa-token-plugin-rocket-v05` |
-| **Warp** | `sa-token-plugin-warp` | （无） | （直接） |
-| **Salvo** | `sa-token-plugin-salvo` | `v079` | `sa-token-plugin-salvo-v079` |
-| **Tide** | `sa-token-plugin-tide` | （无） | （直接） |
-| **Gotham** | `sa-token-plugin-gotham` | `v074` | `sa-token-plugin-gotham-v074` |
-| **Ntex** | `sa-token-plugin-ntex` | `v212` | `sa-token-plugin-ntex-v212` |
+```rust
+use sa_token_plugin_axum::*; // 或其它插件门面
+use std::sync::Arc;
 
-速查：[快速入门](./quick-start.md)。
-
-### 版本分离架构
-
-门面 crate（Actix-web、Rocket、Salvo、Gotham、Ntex）使用 Cargo features 在编译时选择框架大版本。每个门面从版本特定的绑定 crate（`*-v4`、`*-v05` 等）重导出，并共享一个 `*-core` crate 用于通用逻辑（状态、适配器、错误响应）。
-
-```toml
-# 默认：v4（生产就绪）
-sa-token-plugin-actix-web = "0.1.14"
-
-# 显式 feature 选择
-sa-token-plugin-actix-web = { version = "0.1.14", default-features = false, features = ["v4", "redis"] }
+let state = SaTokenState::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .token_name("Authorization")
+    .timeout(86400)
+    .is_read_header(true)
+    .build(); // 内部 try_init_manager；库代码也可 SaTokenConfig::try_build
 ```
 
-所有插件都提供：
-- 使用 Builder 模式的状态管理
-- 双重中间件（基础 + 强制登录）
-- 三种提取器（必须、可选、LoginId）
-- 请求/响应适配器
-- 从 Header/Cookie/Query 提取 Token
-- Bearer Token 支持
-- `SaTokenLayer` 用于细粒度路由控制
-- `with_path_auth(state, config)` 用于路径鉴权规则
+不要再依赖已删除的 `sa-token-plugin-*-core`。
 
----
-
-## Axum
-
-```toml
-[dependencies]
-sa-token-plugin-axum = "0.1.14"
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-```
+## Axum：Layer + Extractor
 
 ```rust
 use axum::{Router, routing::{get, post}};
-use sa_token_plugin_axum::{SaTokenState, SaTokenMiddleware, LoginIdExtractor};
+use sa_token_plugin_axum::*;
 
-let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
-    .build();
+let path_auth = PathAuthConfig::new()
+    .include(vec!["/**".into()])
+    .exclude(vec!["/api/login".into(), "/api/health".into()]);
 
 let app = Router::new()
-    .route("/user/info", get(user_info))
-    .layer(SaTokenMiddleware::new(state));
+    .route("/api/login", post(login))
+    .route("/api/me", get(me))
+    .layer(SaTokenLayer::with_path_auth(state.clone(), path_auth))
+    .with_state(state);
+
+async fn me(SaTokenExtractor(token): SaTokenExtractor) -> String {
+    token.as_str().to_string()
+}
+// 另有 OptionalSaTokenExtractor、LoginIdExtractor
 ```
 
----
+公开路由必须 `PathAuthConfig::exclude`；`#[sa_ignore]` 只跳过宏检查，不跳过 Layer。
 
-## Actix-web
+## Actix-web：Middleware
+
+门面默认 **`v4`**。feature **`v5` 仅为占位**，单独启用会 `compile_error!`，生产请用 `v4`。
+
+```toml
+sa-token-plugin-actix-web = "0.2.0" # default features = ["v4", ...]
+```
 
 ```rust
 use actix_web::{App, HttpServer, web};
-use sa_token_plugin_actix_web::{SaTokenState, SaTokenMiddleware, LoginIdExtractor};
-
-// 初始化 Sa-Token
-let sa_token_manager = conf::init_sa_token(None)
-    .await
-    .expect("Sa-Token 初始化失败");
-
-// 创建 Sa-Token 状态
-let sa_token_state = SaTokenState {
-    manager: sa_token_manager.clone(),
-};
-
-// 创建应用状态数据
-let sa_token_data = web::Data::new(sa_token_state.clone());
+use sa_token_plugin_actix_web::*;
 
 HttpServer::new(move || {
     App::new()
-        // 注册中间件
-        .wrap(Logger::default())
-        .app_data(sa_token_data.clone()) // 注入 Sa-Token 到应用状态
-        .wrap(SaTokenMiddleware::new(sa_token_state.clone()))
-
-        // 路由
+        .app_data(web::Data::new(state.clone()))
+        .wrap(SaTokenMiddleware::with_path_auth(
+            state.clone(),
+            PathAuthConfig::new()
+                .include(vec!["/**".into()])
+                .exclude(vec!["/api/login".into()]),
+        ))
         .route("/api/login", web::post().to(login))
-        .route("/api/user/info", web::get().to(user_info))
 })
-.bind("0.0.0.0:3000")?
-.run()
-.await
-
-// 完整示例请参考 examples/actix-web-example/
 ```
 
----
+## 其它插件（短表）
 
-## Poem
+| 框架 | Crate | 说明 |
+|------|-------|------|
+| Poem | `sa-token-plugin-poem` | `SaTokenLayer::with_path_auth` |
+| Warp | `sa-token-plugin-warp` | 一体化 |
+| Tide | `sa-token-plugin-tide` | 一体化 |
+| Rocket | `sa-token-plugin-rocket` | 门面，feature 选大版本 |
+| Salvo | `sa-token-plugin-salvo` | 门面 |
+| Gotham | `sa-token-plugin-gotham` | 门面 |
+| Ntex | `sa-token-plugin-ntex` | 门面 |
+| Tonic | `sa-token-plugin-tonic` | gRPC Layer + PathAuth |
 
-```rust
-use poem::{Route, Server};
-use sa_token_plugin_poem::{SaTokenState, SaTokenMiddleware, LoginIdExtractor};
+## Token 读取（token_io）
 
-let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
-    .build();
+插件适配器把请求变成 `SaRequest` 后调用：
 
-let app = Route::new()
-    .at("/user/info", poem::get(user_info))
-    .with(SaTokenMiddleware::new(state));
+- `token_io::read_token` — 按 `is_read_header` / `is_read_cookie` / `is_read_body` 与 `token_name`
+- `apply_token_prefix` — 可选前缀
+- 写回：`is_write_cookie` + `write_token_cookie`
 
-Server::new(TcpListener::bind("127.0.0.1:8080"))
-    .run(app)
-    .await
-```
+WebSocket 握手的 map 形态见 `read_token_from_maps`（[WebSocket 鉴权](/zh/guide/websocket-auth.md)）。
 
----
+## 相关链接
 
-## Rocket
-
-```rust
-use rocket::{launch, get, routes};
-use sa_token_plugin_rocket::{SaTokenState, SaTokenFairing, LoginIdGuard};
-
-#[get("/user/info")]
-fn user_info(login_id: LoginIdGuard) -> String {
-    format!("用户: {}", login_id.0)
-}
-
-#[launch]
-fn rocket() -> _ {
-    let state = SaTokenState::builder()
-        .storage(Arc::new(MemoryStorage::new()))
-        .build();
-
-    rocket::build()
-        .attach(SaTokenFairing::new(state))
-        .mount("/", routes![user_info])
-}
-```
-
----
-
-## Warp
-
-```rust
-use warp::Filter;
-use sa_token_plugin_warp::{SaTokenState, sa_token_filter};
-
-let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
-    .build();
-
-let routes = warp::path("user")
-    .and(warp::path("info"))
-    .and(sa_token_filter(state))
-    .map(|token_data| {
-        format!("用户信息")
-    });
-
-warp::serve(routes)
-    .run(([127, 0, 0, 1], 8080))
-    .await;
-```
-
----
-
-## Salvo
-
-```toml
-[dependencies]
-sa-token-plugin-salvo = "0.1.14"
-salvo = "0.79"
-```
-
-```rust
-use salvo::prelude::*;
-use sa_token_plugin_salvo::{SaTokenState, SaTokenLayer, SaCheckLoginMiddleware, LoginIdExtractor};
-
-#[handler]
-async fn user_info(login_id: LoginIdExtractor) -> String {
-    format!("用户: {}", login_id.login_id())
-}
-
-#[tokio::main]
-async fn main() {
-    let state = SaTokenState::builder()
-        .storage(Arc::new(MemoryStorage::new()))
-        .build();
-
-    let router = Router::new()
-        .hoop(SaTokenLayer::new(state.clone()))
-        .push(Router::with_path("/api")
-            .push(Router::with_path("/user/info").get(user_info))
-            .push(Router::with_path("/admin")
-                .hoop(SaCheckLoginMiddleware::new(state))
-                .get(admin_panel)));
-
-    Server::new(TcpListener::bind("127.0.0.1:8080"))
-        .serve(router)
-        .await;
-}
-```
-
-Salvo 还提供 `SaCheckPermissionMiddleware` 和 `SaCheckRoleMiddleware` 用于细粒度授权。
-
----
-
-## Tide
-
-```toml
-[dependencies]
-sa-token-plugin-tide = "0.1.14"
-tide = "0.17"
-```
-
-```rust
-use tide::Request;
-use sa_token_plugin_tide::{SaTokenState, SaTokenLayer, SaCheckLoginMiddleware, LoginIdExtractor};
-
-#[tokio::main]
-async fn main() -> tide::Result<()> {
-    let state = SaTokenState::builder()
-        .storage(Arc::new(MemoryStorage::new()))
-        .build();
-
-    let mut app = tide::with_state(state.clone());
-    app.with(SaTokenLayer::new(state.clone()));
-
-    app.at("/api/user/info").get(|req: Request<SaTokenState>| async move {
-        let login_id = LoginIdExtractor::from_request(&req).unwrap();
-        Ok(format!("用户: {}", login_id.login_id()))
-    });
-
-    app.at("/api/admin/*")
-        .with(SaCheckLoginMiddleware::new(state))
-        .get(admin_panel);
-
-    app.listen("127.0.0.1:8080").await?;
-    Ok(())
-}
-```
-
----
-
-## Gotham
-
-```toml
-[dependencies]
-sa-token-plugin-gotham = "0.1.14"
-gotham = "0.7"
-```
-
-```rust
-use gotham::prelude::*;
-use sa_token_plugin_gotham::{SaTokenState, SaTokenMiddleware, SaCheckLoginMiddleware};
-
-fn router(state: SaTokenState) -> Router {
-    build_simple_router(|route| {
-        route
-            .middleware(SaTokenMiddleware::new(state.clone()))
-            .get("/user/info")
-            .to(user_info);
-
-        route
-            .middleware(SaCheckLoginMiddleware::new(state.clone()))
-            .get("/admin")
-            .to(admin_panel);
-    })
-}
-
-fn main() {
-    let state = SaTokenState::builder()
-        .storage(Arc::new(MemoryStorage::new()))
-        .build();
-
-    gotham::start("127.0.0.1:8080", router(state));
-}
-```
-
----
-
-## Ntex
-
-```toml
-[dependencies]
-sa-token-plugin-ntex = "0.1.14"
-ntex = "2.12"
-```
-
-```rust
-use ntex::web;
-use sa_token_plugin_ntex::{SaTokenState, SaTokenLayer, SaCheckLoginMiddleware, LoginIdExtractor};
-
-#[web::get("/user/info")]
-async fn user_info(login_id: LoginIdExtractor) -> String {
-    format!("用户: {}", login_id.login_id().unwrap_or("unknown"))
-}
-
-#[ntex::main]
-async fn main() -> std::io::Result<()> {
-    let state = SaTokenState::builder()
-        .storage(Arc::new(MemoryStorage::new()))
-        .build();
-
-    web::HttpServer::new(move || {
-        web::App::new()
-            .wrap(SaTokenLayer::new(state.clone()))
-            .service(user_info)
-    })
-    .bind("127.0.0.1:8080")?
-    .run()
-    .await
-}
-```
-
----
-
-## 通用模式
-
-### 中间件类型
-
-每个插件提供基础中间件/层和可选的检查中间件：
-
-| 框架 | 基础（验证+注入，不阻止） | 强制登录（无token→401） | 权限（403） | 角色（403） |
-|---|---|---|---|---|
-| **Axum** | `SaTokenLayer` | `SaCheckLoginLayer` | `SaCheckPermissionLayer` | — |
-| **Actix-web** | `SaTokenLayer` | `SaCheckLoginMiddleware` | — | — |
-| **Poem** | `SaTokenMiddleware` | `SaCheckLoginMiddleware` | — | — |
-| **Rocket** | `SaTokenFairing` | `SaCheckLoginFairing` | `SaCheckPermissionFairing` | `SaCheckRoleFairing` |
-| **Salvo** | `SaTokenLayer` | `SaCheckLoginMiddleware` | `SaCheckPermissionMiddleware` | `SaCheckRoleMiddleware` |
-| **Warp** | `sa_token_filter` | `sa_check_login_filter` | — | — |
-| **Tide** | `SaTokenLayer` | `SaCheckLoginMiddleware` | `SaCheckPermissionMiddleware` | `SaCheckRoleMiddleware` |
-| **Gotham** | `SaTokenMiddleware` | `SaCheckLoginMiddleware` | `SaCheckPermissionMiddleware` | `SaCheckRoleMiddleware` |
-| **Ntex** | `SaTokenLayer` | `SaCheckLoginMiddleware` | `SaCheckPermissionMiddleware` | `SaCheckRoleMiddleware` |
-
-### 提取器
-
-每个插件提供三种提取器类型：
-
-1. **LoginIdExtractor**（必须）：提取登录 ID，如果未认证则返回 401
-2. **OptionalLoginIdExtractor**（可选）：如果存在则提取登录 ID，否则返回 `None`
-3. **TokenValueExtractor**：提取原始 Token 值用于自定义处理
-
-### Token 来源
-
-Token 按优先级从多个来源自动提取：
-
-1. **Authorization 头**：`Authorization: Bearer <token>` 或 `Authorization: <token>`
-2. **Cookie**：可配置的 Cookie 名称
-3. **Query 参数**：可配置的查询参数名称
-
-### 自定义 Token 名称
-
-```rust
-let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
-    .token_name("X-Auth-Token")  // 自定义 header/cookie/query 名称
-    .build();
-```
-
-### 分层中间件（Axum）
-
-```rust
-use sa_token_plugin_axum::{SaTokenLayer, SaCheckLoginLayer, SaCheckPermissionLayer};
-
-let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
-    .build();
-
-let app = Router::new()
-    // 全局：验证 token，注入上下文（不阻止未认证请求）
-    .layer(SaTokenLayer::new(state.clone()))
-    // 按路由：需要登录
-    .route("/user/info", get(user_info))
-    .route_layer(SaCheckLoginLayer::new(state.clone()))
-    // 按路由：需要特定权限
-    .route("/user/delete", post(delete_user))
-    .route_layer(SaCheckPermissionLayer::new(state.clone(), "user:delete"));
-```
-
-### 路径鉴权路由器
-
-```rust
-use sa_token_core::router::{PathAuthConfig, run_auth_flow, extract_token};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-// 在中间件 / layer 中：
-let token_str = extract_token(&req, token_name);
-let flow = run_auth_flow(&req, &manager, Some(&config)).await;
-if flow.should_reject() {
-    return StatusCode::UNAUTHORIZED;
-}
-flow.run(service.call(req)).await
-```
+- [快速入门](/zh/guide/quick-start.md)
+- [路径鉴权](/zh/guide/path-auth.md)
+- [适配器](/zh/guide/adapter.md)

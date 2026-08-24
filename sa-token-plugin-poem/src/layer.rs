@@ -7,9 +7,9 @@ use poem_03::{Endpoint, Middleware, Request, Result};
 
 use sa_token_core::router::PathAuthConfig;
 use sa_token_core::router::run_auth_flow;
+use sa_token_plugin_common::{SaLoginId, SaTokenState};
 
 use crate::adapter::PoemRequestAdapter;
-use crate::SaTokenState;
 
 /// Sa-Token layer for Poem with optional path-based authentication
 pub struct SaTokenLayer {
@@ -75,15 +75,19 @@ where
             req.extensions_mut().insert(t.clone());
         }
         if let Some(id) = &flow.login_id {
-            req.extensions_mut().insert(id.clone());
+            req.extensions_mut().insert(SaLoginId(id.clone()));
         }
 
         flow.run(self.inner.call(req)).await
     }
 }
 
-/// Extract token string (for filters / other helpers). Uses `sa_token_core::router::extract_token`.
-pub fn extract_token_from_request(req: &Request, token_name: &str) -> Option<String> {
+/// Extract token string (for filters / other helpers). Uses config-aware extract.
+/// 提取 token 字符串（供过滤器等使用）。走尊重配置的抽取。
+pub fn extract_token_from_request(
+    req: &Request,
+    config: &sa_token_core::SaTokenConfig,
+) -> Option<String> {
     let adapter = PoemRequestAdapter::new(req);
-    sa_token_core::router::extract_token(&adapter, token_name)
+    sa_token_core::router::extract_token_from(&adapter, config)
 }

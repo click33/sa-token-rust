@@ -13,14 +13,14 @@ Rocket framework integration for sa-token-rust.
 
 ```toml
 [dependencies]
-sa-token-plugin-rocket = { version = "0.1.13", features = ["redis"] }
+sa-token-plugin-rocket = { version = "0.2.0", features = ["redis"] }
 rocket = "0.5"
 ```
 
 ## 版本与 crate 结构（多版本适配）
 
 - **Facade**：本 crate（`sa-token-plugin-rocket`），默认启用 **`v05`** → 绑定 **`sa-token-plugin-rocket-v05`**（Rocket **0.5**）。
-- **共享类型**：`sa-token-plugin-rocket-core`（无 `rocket` 依赖）：`SaTokenState`、`router::run_auth_flow` 等。
+- **共享类型**：`sa-token-plugin-common`（本 crate 再导出 `SaTokenState` 等）。
 
 ## Quick Start
 
@@ -50,15 +50,6 @@ fn rocket() -> _ {
         .mount("/", routes![user_info])
 }
 ```
-
-## Version History
-
-### 0.1.13
-- ✨ Added path-based authentication support for fine-grained access control
-- 🔧 Optimized middleware implementation, reduced code duplication
-
-### 0.1.11
-- Initial release with basic features
 
 ## Author
 

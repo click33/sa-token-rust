@@ -2,6 +2,7 @@
 name = "sa-token-macro"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -21,5 +22,12 @@ proc-macro2 = "1.0"
 
 [dev-dependencies]
 tokio = { workspace = true }
-sa-token-core = { version = "0.1.18", path = "../sa-token-core" }
-sa-token-storage-memory = { version = "0.1.18", path = "../sa-token-storage-memory" }
+sa-token-core = { workspace = true }
+sa-token-storage-memory = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

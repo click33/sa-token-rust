@@ -2,6 +2,7 @@
 name = "sa-token-plugin-actix-web"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -12,8 +13,8 @@ categories.workspace = true
 description = "Actix-web framework integration for sa-token-rust (facade over versioned bindings)"
 
 [dependencies]
-sa-token-plugin-actix-web-v4 = { version = "0.1.18", path = "../sa-token-plugin-actix-web-v4", optional = true }
-sa-token-plugin-actix-web-v5 = { version = "0.1.18", path = "../sa-token-plugin-actix-web-v5", optional = true }
+sa-token-plugin-actix-web-v4 = { version = "0.2.0", path = "../sa-token-plugin-actix-web-v4", optional = true }
+sa-token-plugin-actix-web-v5 = { version = "0.2.0", path = "../sa-token-plugin-actix-web-v5", optional = true }
 
 [features]
 default = ["v4", "memory"]
@@ -32,3 +33,10 @@ database = [
     "sa-token-plugin-actix-web-v5?/database",
 ]
 full = ["memory", "redis", "database"]
+
+[package.metadata.docs.rs]
+features = ["v4", "v5", "memory", "redis", "database"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

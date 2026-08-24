@@ -110,10 +110,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/role/list", get(list_roles))
         
         // StpUtil 演示接口
-        .route("/api/demo/stp-util", get(demo_stp_util_api))
-        
-        // 添加 SaTokenLayer 中间件来提取和验证 Token
-        .layer(SaTokenLayer::new(app_state.sa_token.clone()))
+        .route("/api/demo/stp-util", get(demo_stp_util_api));
+
+    // Anonymous routes must be excluded; #[sa_ignore] does not skip this layer.
+    // 匿名路由必须排除；#[sa_ignore] 不会跳过本层。
+    let path_auth = PathAuthConfig::new()
+        .include(vec!["/**".into()])
+        .exclude(vec![
+            "/".into(),
+            "/api/health".into(),
+            "/api/register".into(),
+            "/api/login".into(),
+            "/api/demo/stp-util".into(),
+        ]);
+
+    let app = app
+        .layer(SaTokenLayer::with_path_auth(
+            app_state.sa_token.clone(),
+            path_auth,
+        ))
         .with_state(app_state);
     
     // 6. 启动服务器
@@ -191,23 +206,20 @@ async fn init_test_permissions() {
     tracing::info!("✅ 权限初始化完成！\n");
 }
 
-// ==================== 公开接口（使用 #[sa_ignore] 宏）====================
+// ==================== 公开接口（路径放行靠 PathAuthConfig::exclude）====================
 
-#[sa_ignore]
 async fn index() -> &'static str {
     "Welcome to sa-token-rust! Visit /api/health to check health."
 }
 
-#[sa_ignore]
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": "ok",
         "service": "sa-token-rust",
-        "version": "0.1.0"
+        "version": "0.2.0"
     }))
 }
 
-#[sa_ignore]
 async fn register(
     State(state): State<AppState>,
     Json(req): Json<RegisterRequest>,
@@ -393,8 +405,7 @@ async fn manage_user(
 
 // ==================== StpUtil 演示接口 ====================
 
-/// StpUtil 功能演示接口
-#[sa_ignore]
+/// StpUtil 功能演示接口（路径已在 PathAuthConfig::exclude 中放行）
 async fn demo_stp_util_api(
     State(_state): State<AppState>,
 ) -> Result<Json<ApiResponse<String>>, ApiError> {

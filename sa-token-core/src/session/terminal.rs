@@ -1,6 +1,7 @@
 // Author: 金书记
 //
-//! 登录设备终端信息（对齐 Java SaTerminalInfo）
+//! Login device / terminal row for multi-device sessions.
+//! 登录设备终端信息（多端会话）。
 //!
 //! 记录某账号某次登录所用的设备：第几个登录(index)、token、设备类型、设备唯一标识、
 //! 登录时挂载的扩展数据、创建时间。终端信息随 Account-Session 一并持久化。
@@ -22,7 +23,8 @@ pub struct SaTerminalInfo {
     pub device_id: Option<String>,
     /// 登录时挂载的扩展数据（只建议登录前设定）
     pub extra_data: Option<serde_json::Value>,
-    /// 创建时间（Unix 毫秒），与 Java createTime 对齐
+    /// Created-at timestamp (Unix millis).
+    /// 创建时间（Unix 毫秒）。
     pub create_time: i64,
 }
 
@@ -51,7 +53,8 @@ impl SaTerminalInfo {
         self
     }
 
-    /// 是否设置了非空扩展数据（对齐 Java haveExtraData）
+    /// True when non-empty extra data is set.
+    /// 是否设置了非空扩展数据。
     pub fn have_extra_data(&self) -> bool {
         matches!(&self.extra_data, Some(v) if !v.is_null())
     }

@@ -2,6 +2,7 @@
 name = "sa-token-storage-redis"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -12,9 +13,16 @@ categories.workspace = true
 description = "Redis storage implementation for sa-token-rust"
 
 [dependencies]
-sa-token-adapter = { version = "0.1.18", path = "../sa-token-adapter" }
+sa-token-adapter = { workspace = true }
 tokio = { workspace = true }
 async-trait = { workspace = true }
 redis = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

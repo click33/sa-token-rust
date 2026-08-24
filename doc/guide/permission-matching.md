@@ -1,259 +1,109 @@
-# Proc Macros
+# Permissions and macros
 
-[中文文档](/zh/guide/permission-matching) | English
+English | [中文](/zh/guide/permission-matching.md)
 
-sa-token-rust provides 8 procedural macros for declarative authentication and authorization. All macros work at **compile time**, inserting the appropriate check logic into the function body before compilation.
+Permissions default to **Ant segment wildcards** (`AntPermissionMatcher`); roles default to **exact match** (`ExactMatcher`). Set `role_wildcard(true)` to use Ant for roles too. Handler-side `#[sa_check_*]` macros insert `StpUtil` checks.
 
-## Table of Contents
+## Ant vs Exact
 
-- [Overview](#overview)
-- [Constraints](#constraints)
-- [Macro Reference](#macro-reference)
-- [Permission Matching Rules](#permission-matching-rules)
-- [Role Matching Rules](#role-matching-rules)
-- [Best Practices](#best-practices)
+Permissions are split on `:`:
 
-## Overview
+| Owned pattern | Covers | Does not cover |
+|---------------|--------|----------------|
+| `user:read` | `user:read` | anything else |
+| `*` / `**` | any permission | — |
+| `user:*` | `user:add` | `user`, `user:add:vip` |
+| `user:**` | `user`, `user:add`, `user:add:vip` | `userx` |
+| `user:*:read` | `user:add:read` | `user:read` |
 
-| Macro | Purpose |
-|---|---|
-| `#[sa_check_login]` | Require user to be logged in |
-| `#[sa_check_permission("p")]` | Require a specific permission |
-| `#[sa_check_permissions_and("a","b")]` | Require ALL specified permissions |
-| `#[sa_check_permissions_or("a","b")]` | Require ANY specified permission |
-| `#[sa_check_role("r")]` | Require a specific role |
-| `#[sa_check_roles_and("a","b")]` | Require ALL specified roles |
-| `#[sa_check_roles_or("a","b")]` | Require ANY specified role |
-| `#[sa_ignore]` | Skip all authentication checks |
-
-## Constraints
-
-All `#[sa_check_*]` macros share the same requirements:
-
-1. **Function must be `async fn`** — compile-time error if not
-2. **Return type must be `Result<T, E>` where `E: From<SaTokenError>`** — the `?` operator propagates auth errors
-3. **Must use framework middleware** — `SaTokenLayer` (or equivalent) must be registered to inject the login context into the request, otherwise macros cannot read `login_id`
-
-`#[sa_ignore]` can be applied to functions, structs, or impl blocks without the async requirement.
-
-## Macro Reference
-
-### `#[sa_check_login]`
-
-Checks that the current request has a valid login context.
+Roles must match exactly unless you enable wildcards:
 
 ```rust
-use sa_token_macro::sa_check_login;
+SaTokenConfig::builder()
+    .storage(storage)
+    .role_wildcard(true) // roles also use AntPermissionMatcher
+    .try_build()?;
+```
+
+You can also inject a custom `PermissionMatcher` via `with_permission_matcher` / `with_role_matcher` on the manager.
+
+## has_* vs check_*
+
+| Family | Returns | Typical use |
+|--------|---------|-------------|
+| `has_permission` / `has_role` / `has_all_*` / `has_any_*` | `bool` (`false` if not init) | Branches, UI flags |
+| `check_permission` / `check_role` / `check_all_*` / `check_any_*` | `SaTokenResult<()>` | Guards; fail upward |
+
+```rust
+StpUtil::set_permissions("10001", vec!["user:*".into()]).await?;
+
+assert!(StpUtil::has_permission("10001", "user:add").await);
+StpUtil::check_permission("10001", "user:delete").await?; // denied → Err
+
+StpUtil::has_all_permissions("10001", &["user:add", "user:list"]).await;
+StpUtil::has_any_permission("10001", &["admin:all", "user:add"]).await;
+```
+
+Aliases: `has_permissions_and` ≡ `has_all_permissions`; `has_permissions_or` ≡ `has_any_permission`.
+
+## Macros `sa_check_*`
+
+The target must be an `async fn` returning `Result<T, E>` where `E: From<SaTokenError>`. Macros insert the matching `StpUtil` call at the start of the function (needs request context / current login id).
+
+```rust
+use sa_token_macro::{
+    sa_check_login, sa_check_permission, sa_check_role,
+    sa_check_permissions_and, sa_check_permissions_or,
+    sa_check_roles_and, sa_check_roles_or,
+};
 
 #[sa_check_login]
-async fn user_profile() -> Result<impl Responder, StatusCode> {
-    // login_id is guaranteed to be available via StpUtil::get_login_id_as_string()
-    Ok("Profile page")
+async fn profile() -> Result<String, SaTokenError> {
+    Ok(StpUtil::get_login_id_as_string().await?)
 }
-```
-
-**Expands to:**
-```rust
-async fn user_profile() -> Result<impl Responder, StatusCode> {
-    sa_token_core::StpUtil::check_login_current()?;
-    Ok("Profile page")
-}
-```
-
----
-
-### `#[sa_check_permission("permission")]`
-
-Checks the user has the exact permission. Supports wildcards (see [Permission Matching](#permission-matching-rules)).
-
-```rust
-use sa_token_macro::sa_check_permission;
 
 #[sa_check_permission("user:delete")]
-async fn delete_user() -> Result<impl Responder, StatusCode> {
-    Ok("User deleted")
-}
-
-#[sa_check_permission("admin:*")]
-async fn admin_dashboard() -> Result<impl Responder, StatusCode> {
-    Ok("Admin dashboard")
-}
-```
-
-**Expands to:**
-```rust
-async fn delete_user() -> Result<impl Responder, StatusCode> {
-    let __login_id = sa_token_core::StpUtil::get_login_id_as_string().await?;
-    sa_token_core::StpUtil::check_permission(&__login_id, "user:delete").await?;
-    Ok("User deleted")
-}
-```
-
----
-
-### `#[sa_check_permissions_and("a", "b", ...)]`
-
-User must have ALL specified permissions.
-
-```rust
-#[sa_check_permissions_and("user:read", "user:write")]
-async fn manage_users() -> Result<impl Responder, StatusCode> {
-    Ok("User management")
-}
-```
-
-**Expands to a single `has_permissions_and` + returns `PermissionDeniedDetail` on failure.**
-
----
-
-### `#[sa_check_permissions_or("a", "b", ...)]`
-
-User must have AT LEAST ONE specified permission.
-
-```rust
-#[sa_check_permissions_or("admin:panel", "super:admin")]
-async fn admin_or_super() -> Result<impl Responder, StatusCode> {
-    Ok("Admin panel")
-}
-```
-
-**Expands to a single `has_permissions_or` + returns `PermissionDeniedDetail` on failure.**
-
----
-
-### `#[sa_check_role("role")]`
-
-Checks the user has the exact role.
-
-```rust
-use sa_token_macro::sa_check_role;
+async fn delete_user() -> Result<(), SaTokenError> { Ok(()) }
 
 #[sa_check_role("admin")]
-async fn admin_panel() -> Result<impl Responder, StatusCode> {
-    Ok("Admin panel")
-}
+async fn admin_only() -> Result<(), SaTokenError> { Ok(()) }
+
+#[sa_check_permissions_and("user:add", "user:edit")]
+async fn edit() -> Result<(), SaTokenError> { Ok(()) }
+
+#[sa_check_permissions_or("user:add", "admin:all")]
+async fn add_or_admin() -> Result<(), SaTokenError> { Ok(()) }
+
+#[sa_check_roles_and("admin", "auditor")]
+async fn dual_role() -> Result<(), SaTokenError> { Ok(()) }
+
+#[sa_check_roles_or("admin", "ops")]
+async fn admin_or_ops() -> Result<(), SaTokenError> { Ok(()) }
 ```
 
-**Expands to:**
-```rust
-async fn admin_panel() -> Result<impl Responder, StatusCode> {
-    let __login_id = sa_token_core::StpUtil::get_login_id_as_string().await?;
-    sa_token_core::StpUtil::check_role(&__login_id, "admin").await?;
-    Ok("Admin panel")
-}
-```
+Other macros (see security / multi-account guides):
 
----
+- `#[sa_check_or(...)]` — permission or role combinations
+- `#[sa_check_safe]` / `#[sa_check_disable]`
+- `#[sa_check_terminal("pc")]`
+- `#[sa_check_http_basic("user:pass")]`
+- `#[sa_check_same_token]`
 
-### `#[sa_check_roles_and("a", "b", ...)]`
-
-User must have ALL specified roles. Each role is checked sequentially (short-circuits on first failure).
+## Real semantics of `#[sa_ignore]`
 
 ```rust
-#[sa_check_roles_and("admin", "super")]
-async fn super_admin_panel() -> Result<impl Responder, StatusCode> {
-    Ok("Super admin panel")
-}
-```
-
-**Returns `RoleDenied` on first missing role.**
-
----
-
-### `#[sa_check_roles_or("a", "b", ...)]`
-
-User must have AT LEAST ONE specified role.
-
-```rust
-#[sa_check_roles_or("admin", "moderator")]
-async fn moderate_content() -> Result<impl Responder, StatusCode> {
-    Ok("Content moderation")
-}
-```
-
-**Returns `RoleDenied` if none of the roles match.**
-
----
-
-### `#[sa_ignore]`
-
-Skips ALL sa-token authentication checks. Has the highest priority — overrides any other `#[sa_check_*]` macros on the same item.
-
-**Can be applied to:**
-- Functions: skip auth for a single route handler
-- Structs: skip auth for all methods in a controller
-- impl blocks: skip auth for all methods in the impl block
-
-```rust
-use sa_token_macro::sa_ignore;
-
-// Skip auth for a public endpoint
 #[sa_ignore]
-async fn health_check() -> &'static str {
-    "OK"
-}
-
-// Skip auth for an entire controller
-#[sa_ignore]
-struct PublicController;
-
-impl PublicController {
-    async fn home() -> &'static str { "Home" }
-    async fn about() -> &'static str { "About" }
+async fn public_info() -> Result<&'static str, SaTokenError> {
+    Ok("ok")
 }
 ```
 
----
-
-## Permission Matching Rules
-
-Permissions use `module:action` format with two-level wildcard support.
-
-### Matching Algorithm
-
-1. **Exact match** — `user:delete` matches `user:delete`
-2. **Prefix wildcard** — permission ending in `:*` matches all children of that prefix
-3. **Global wildcard** — `*` matches everything
-
-### Wildcard Examples
-
-| User has | Required | Result |
-|---|---|---|
-| `user:*` | `user:delete` | ✅ matches |
-| `user:*` | `user:list` | ✅ matches |
-| `user:*` | `admin:list` | ❌ different prefix |
-| `admin:*` | `user:delete` | ❌ different prefix |
-| `*` | `anything:here` | ✅ global |
-
-### Implementation Detail
-
-The wildcard match checks if a permission ends with `:*` and then verifies the required permission starts with that prefix (excluding the `*`). For example, `user:*` → prefix is `user:`. Required `user:delete` starts with `user:` → match.
-
-**Important:** Only trailing `:*` is supported. Patterns like `admin:*:*` are NOT supported — use `admin:*` instead, which already matches `admin:user:delete`.
-
----
-
-## Role Matching Rules
-
-Role matching is **exact only** — no wildcards. A user's role list is compared against the required role via string equality.
-
-| User has roles | Required | Result |
-|---|---|---|
-| `["admin"]` | `admin` | ✅ matches |
-| `["user", "vip"]` | `admin` | ❌ no match |
-| `["superadmin"]` | `admin` | ❌ no match (different string) |
-
----
-
-## Best Practices
-
-1. **Pair macros with middleware** — Always register `SaTokenLayer` (or equivalent) in your router so the request context is populated
-2. **Use `#[sa_ignore]` for public routes** — login pages, health checks, static assets
-3. **Prefer `module:action` naming** — `user:list`, `user:create`, `order:refund`
-4. **Limit global wildcards** — `*` should only be used for super-admin accounts
-5. **Handle error types** — Ensure your handler's error type implements `From<SaTokenError>`
+- **Does**: skip inserting any `StpUtil` macro checks on this item.
+- **Does not**: bypass `SaTokenLayer` / `SaTokenMiddleware`. Anonymous HTTP paths need `PathAuthConfig::exclude`.
+- **Conflict**: cannot combine `#[sa_ignore]` with `#[sa_check_*]` on the same function (compile error).
 
 ## Related
 
-- [StpUtil API](/guide/stp-util)
-- [Framework Integration](/guide/framework-integration)
+- [Path auth](./path-auth.md)
+- [StpUtil](./stp-util.md)
+- [Security features](./security-features.md)

@@ -1,34 +1,38 @@
 // Author: 金书记
 //
-//! 账号/服务封禁（对齐 Java StpLogic.disable/checkDisable）
+//! Account / Service Ban | 账号/服务封禁
+//!
+//! Account disable / ban checks, with one deliberate
+//! difference: every method is **account-system aware** (A3-18).
 
 use std::time::Duration;
 
 use crate::error::{SaTokenError, SaTokenResult};
+use crate::keys::LOGIN_TYPE_DEFAULT;
 use crate::manager::SaTokenManager;
 
-/// 默认封禁服务标识（对齐 Java `DEFAULT_DISABLE_SERVICE`）
+/// Default ban service identifier | 默认封禁服务标识
 pub const DEFAULT_DISABLE_SERVICE: &str = "login";
 
-/// 最低封禁等级（对齐 Java `MIN_DISABLE_LEVEL`）
+/// Minimum ban level | 最低封禁等级
 pub const MIN_DISABLE_LEVEL: i32 = 1;
 
-/// 未封禁时的等级返回值（对齐 Java `NOT_DISABLE_LEVEL`）
+/// Level returned when an account is not banned | 账号未被封禁时返回的等级
 pub const NOT_DISABLE_LEVEL: i32 = -2;
 
-/// 默认写入封禁等级（对齐 Java `DEFAULT_DISABLE_LEVEL`）
+/// Default level written by [`SaTokenManager::disable`] | 默认封禁等级
 pub const DEFAULT_DISABLE_LEVEL: i32 = 1;
 
 impl SaTokenManager {
-    fn disable_key(&self, login_id: &str, service: &str) -> String {
-        self.config.make_key("disable:", &format!("{}:{}", login_id, service))
+    #[inline]
+    fn disable_key_ns(&self, login_type: &str, login_id: &str, service: &str) -> String {
+        self.keys().disable(login_type, login_id, service)
     }
 
-    /// 封禁指定账号的指定服务及等级
-    ///
-    /// `time` 单位为秒，`-1` 表示永久封禁。
-    pub async fn disable_level(
+    /// Disable at a level for a login type | 按登录类型分级禁用
+    pub async fn disable_level_with_type(
         &self,
+        login_type: &str,
         login_id: &str,
         service: &str,
         level: i32,
@@ -46,8 +50,7 @@ impl SaTokenManager {
         }
         if level < MIN_DISABLE_LEVEL && level != 0 {
             return Err(SaTokenError::ConfigError(format!(
-                "disable level must be >= {} (0 allowed)",
-                MIN_DISABLE_LEVEL
+                "disable level must be >= {MIN_DISABLE_LEVEL} (0 allowed)"
             )));
         }
 
@@ -57,24 +60,31 @@ impl SaTokenManager {
             Some(Duration::from_secs(time as u64))
         };
 
-        self.storage
-            .set(
-                &self.disable_key(login_id, service),
+        self.dao
+            .set_string(
+                &self.disable_key_ns(login_type, login_id, service),
                 &level.to_string(),
                 ttl,
             )
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
+            .await?;
 
-        let event = crate::event::SaTokenEvent::banned(login_id);
+        let ns = self.account_ns(login_type, login_id);
+        let event = crate::event::SaTokenEvent::banned(ns.as_str(), service, level)
+            .with_login_type(login_type);
         self.event_bus.publish(event).await;
 
         Ok(())
     }
 
-    /// 封禁指定账号（默认服务 `login`、默认等级）
-    pub async fn disable(&self, login_id: &str, time: i64) -> SaTokenResult<()> {
-        self.disable_level(
+    /// Disable for a login type | 按登录类型禁用
+    pub async fn disable_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        time: i64,
+    ) -> SaTokenResult<()> {
+        self.disable_level_with_type(
+            login_type,
             login_id,
             DEFAULT_DISABLE_SERVICE,
             DEFAULT_DISABLE_LEVEL,
@@ -83,83 +93,163 @@ impl SaTokenManager {
         .await
     }
 
-    /// 获取封禁等级；未封禁返回 [`NOT_DISABLE_LEVEL`]
-    pub async fn get_disable_level(&self, login_id: &str, service: &str) -> SaTokenResult<i32> {
-        let key = self.disable_key(login_id, service);
-        let value = self
-            .storage
-            .get(&key)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
+    /// Read disable level for a login type | 按登录类型读取禁用等级
+    pub async fn get_disable_level_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        service: &str,
+    ) -> SaTokenResult<i32> {
+        let key = self.disable_key_ns(login_type, login_id, service);
+        let value = self.dao.get_string(&key).await?;
 
         if let Some(v) = value {
             return v.parse::<i32>().map_err(|_| {
-                SaTokenError::StorageError(format!("invalid disable level for key {}", key))
+                SaTokenError::StorageError(format!("invalid disable level for key {key}"))
             });
         }
 
-        if let Some(iface) = &self.stp_interface {
-            if let Some(level) = iface.is_disabled(login_id, service).await? {
-                return Ok(level);
-            }
+        if let Some(level) = self.authz_service().is_disabled(login_id, service).await? {
+            return Ok(level);
         }
 
         Ok(NOT_DISABLE_LEVEL)
     }
 
-    /// 是否已被封禁到指定等级（含更高等级）
-    pub async fn is_disable_level(
+    /// Whether disabled at/above level | 是否达到指定禁用等级
+    pub async fn is_disable_level_with_type(
         &self,
+        login_type: &str,
         login_id: &str,
         service: &str,
         level: i32,
     ) -> SaTokenResult<bool> {
-        let disable_level = self.get_disable_level(login_id, service).await?;
+        let disable_level = self
+            .get_disable_level_with_type(login_type, login_id, service)
+            .await?;
         if disable_level == NOT_DISABLE_LEVEL {
             return Ok(false);
         }
         Ok(disable_level >= level)
     }
 
-    /// 校验封禁；若等级达到阈值则抛出 [`SaTokenError::DisableService`]
+    /// Fail if disabled at/above level | 达到禁用等级则报错
+    pub async fn check_disable_level_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        service: &str,
+        level: i32,
+    ) -> SaTokenResult<()> {
+        let disable_level = self
+            .get_disable_level_with_type(login_type, login_id, service)
+            .await?;
+        if disable_level == NOT_DISABLE_LEVEL {
+            return Ok(());
+        }
+        if disable_level >= level {
+            return Err(SaTokenError::AccountBanned(format!(
+                "service={service} level={disable_level}"
+            )));
+        }
+        Ok(())
+    }
+
+    /// Fail if any listed service is disabled | 任一服务被禁用则报错
+    pub async fn check_disable_services_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        services: &[&str],
+        level: i32,
+    ) -> SaTokenResult<()> {
+        for service in services {
+            self.check_disable_level_with_type(login_type, login_id, service, level)
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Clear disable for a login type | 按登录类型解除禁用
+    pub async fn untie_disable_with_type(
+        &self,
+        login_type: &str,
+        login_id: &str,
+        service: &str,
+    ) -> SaTokenResult<()> {
+        self.dao
+            .delete(&self.disable_key_ns(login_type, login_id, service))
+            .await?;
+
+        let ns = self.account_ns(login_type, login_id);
+        let event =
+            crate::event::SaTokenEvent::unbanned(ns.as_str(), service).with_login_type(login_type);
+        self.event_bus.publish(event).await;
+
+        Ok(())
+    }
+
+    /// Disable at a level (default login type) | 分级禁用（默认登录类型）
+    pub async fn disable_level(
+        &self,
+        login_id: &str,
+        service: &str,
+        level: i32,
+        time: i64,
+    ) -> SaTokenResult<()> {
+        self.disable_level_with_type(LOGIN_TYPE_DEFAULT, login_id, service, level, time)
+            .await
+    }
+
+    /// Disable account/service | 禁用账号或服务
+    pub async fn disable(&self, login_id: &str, time: i64) -> SaTokenResult<()> {
+        self.disable_with_type(LOGIN_TYPE_DEFAULT, login_id, time)
+            .await
+    }
+
+    /// Read disable level | 读取禁用等级
+    pub async fn get_disable_level(&self, login_id: &str, service: &str) -> SaTokenResult<i32> {
+        self.get_disable_level_with_type(LOGIN_TYPE_DEFAULT, login_id, service)
+            .await
+    }
+
+    /// Whether disabled at/above level | 是否达到指定禁用等级
+    pub async fn is_disable_level(
+        &self,
+        login_id: &str,
+        service: &str,
+        level: i32,
+    ) -> SaTokenResult<bool> {
+        self.is_disable_level_with_type(LOGIN_TYPE_DEFAULT, login_id, service, level)
+            .await
+    }
+
+    /// Fail if disabled at/above level | 达到禁用等级则报错
     pub async fn check_disable_level(
         &self,
         login_id: &str,
         service: &str,
         level: i32,
     ) -> SaTokenResult<()> {
-        let disable_level = self.get_disable_level(login_id, service).await?;
-        if disable_level == NOT_DISABLE_LEVEL {
-            return Ok(());
-        }
-        if disable_level >= level {
-            return Err(SaTokenError::AccountBanned(format!(
-                "service={} level={}",
-                service, disable_level
-            )));
-        }
-        Ok(())
+        self.check_disable_level_with_type(LOGIN_TYPE_DEFAULT, login_id, service, level)
+            .await
     }
 
-    /// 校验多个服务的封禁（全部通过才算通过）
+    /// Fail if any listed service is disabled | 任一服务被禁用则报错
     pub async fn check_disable_services(
         &self,
         login_id: &str,
         services: &[&str],
         level: i32,
     ) -> SaTokenResult<()> {
-        for service in services {
-            self.check_disable_level(login_id, service, level).await?;
-        }
-        Ok(())
+        self.check_disable_services_with_type(LOGIN_TYPE_DEFAULT, login_id, services, level)
+            .await
     }
 
-    /// 解封指定服务
+    /// Clear disable flag | 解除禁用
     pub async fn untie_disable(&self, login_id: &str, service: &str) -> SaTokenResult<()> {
-        self.storage
-            .delete(&self.disable_key(login_id, service))
+        self.untie_disable_with_type(LOGIN_TYPE_DEFAULT, login_id, service)
             .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))
     }
 }
 
@@ -171,10 +261,7 @@ mod tests {
     use std::sync::Arc;
 
     fn manager() -> SaTokenManager {
-        SaTokenManager::new(
-            Arc::new(MemoryStorage::new()),
-            SaTokenConfig::default(),
-        )
+        SaTokenManager::new(Arc::new(MemoryStorage::new()), SaTokenConfig::default())
     }
 
     #[tokio::test]

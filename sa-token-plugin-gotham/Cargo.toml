@@ -2,6 +2,7 @@
 name = "sa-token-plugin-gotham"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 repository.workspace = true
@@ -12,7 +13,7 @@ categories.workspace = true
 description = "Gotham framework integration for sa-token-rust (facade over versioned bindings)"
 
 [dependencies]
-sa-token-plugin-gotham-v074 = { version = "0.1.18", path = "../sa-token-plugin-gotham-v074", optional = true }
+sa-token-plugin-gotham-v074 = { version = "0.2.0", path = "../sa-token-plugin-gotham-v074", optional = true }
 
 [features]
 default = ["v074", "memory"]
@@ -21,3 +22,10 @@ memory = ["sa-token-plugin-gotham-v074?/memory"]
 redis = ["sa-token-plugin-gotham-v074?/redis"]
 database = ["sa-token-plugin-gotham-v074?/database"]
 full = ["memory", "redis", "database"]
+
+[package.metadata.docs.rs]
+features = ["v4", "v5", "memory", "redis", "database"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

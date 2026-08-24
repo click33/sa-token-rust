@@ -1,28 +1,22 @@
-//! `StpUtil::*_current` 在多 worker 下调度后仍可用（共享全局 `SaTokenManager` / `StpUtil`）。
+//! `StpUtil::*_current` 在多 worker 下 yield 后仍可用（共享全局 manager / StpUtil）。
+
+mod common;
+
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, OnceLock};
 use std::task::{Context, Poll};
 
-use actix_web::{test, web, App, HttpResponse};
+use actix_web::{App, HttpResponse, test, web};
+use axum::body::{Body, to_bytes};
 use axum_08 as axum;
-use axum::body::{to_bytes, Body};
+use common::setup;
 use http::{Request, Response};
-use sa_token_core::{SaTokenConfig, StpUtil};
-use sa_token_plugin_actix_web_v4::{MemoryStorage, SaTokenLayer, SaTokenState as ActixState};
+use sa_token_core::StpUtil;
+use sa_token_plugin_actix_web_v4::{SaTokenLayer, SaTokenState as ActixState};
 use sa_token_plugin_axum::{SaTokenLayer as AxumSaLayer, SaTokenState as AxumState};
-use tower_08 as tower;
 use tower::{Layer, Service, ServiceExt};
-
-fn shared_manager() -> Arc<sa_token_core::SaTokenManager> {
-    static M: OnceLock<Arc<sa_token_core::SaTokenManager>> = OnceLock::new();
-    M.get_or_init(|| {
-        let storage = Arc::new(MemoryStorage::new());
-        Arc::new(SaTokenConfig::builder().storage(storage).build())
-    })
-    .clone()
-}
+use tower_08 as tower;
 
 #[derive(Clone)]
 struct YieldThenLoginIdSvc;
@@ -51,13 +45,12 @@ impl Service<Request<Body>> for YieldThenLoginIdSvc {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn axum_layer_survives_yield_for_stputil_current() {
-    let mgr = shared_manager();
-    let state = AxumState::from_manager((*mgr).clone());
-
-    let token = mgr
-        .login("u-scope-axum".to_string())
-        .await
-        .expect("login");
+    let mgr = setup::shared_manager();
+    let state = AxumState {
+        manager: mgr.clone(),
+    };
+    let id = setup::unique_login_id("u-scope-axum");
+    let token = mgr.login(&id).await.expect("login");
 
     let mut svc = AxumSaLayer::new(state).layer(YieldThenLoginIdSvc);
 
@@ -65,7 +58,7 @@ async fn axum_layer_survives_yield_for_stputil_current() {
         .uri("/")
         .header("sa-token", token.as_str())
         .body(Body::empty())
-        .unwrap();
+        .expect("request");
 
     let res = svc
         .ready()
@@ -76,36 +69,29 @@ async fn axum_layer_survives_yield_for_stputil_current() {
         .expect("call");
 
     assert_eq!(res.status(), http::StatusCode::OK);
-    let bytes = to_bytes(res.into_body(), usize::MAX).await.unwrap();
-    assert_eq!(&bytes[..], b"u-scope-axum");
+    let bytes = to_bytes(res.into_body(), usize::MAX).await.expect("body");
+    assert_eq!(&bytes[..], id.as_bytes());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn actix_layer_survives_yield_for_stputil_current() {
-    let mgr = shared_manager();
+    let mgr = setup::shared_manager();
     let state = ActixState {
         manager: mgr.clone(),
     };
+    let id = setup::unique_login_id("u-scope-actix");
+    let token = mgr.login(&id).await.expect("login");
 
-    let token = mgr
-        .login("u-scope-actix".to_string())
-        .await
-        .expect("login");
-
-    let app = test::init_service(
-        App::new().wrap(SaTokenLayer::new(state.clone())).route(
-            "/me",
-            web::get().to(|| async move {
-                for _ in 0..32 {
-                    tokio::task::yield_now().await;
-                }
-                let id = StpUtil::get_login_id_as_string()
-                    .await
-                    .expect("login id");
-                HttpResponse::Ok().body(id)
-            }),
-        ),
-    )
+    let app = test::init_service(App::new().wrap(SaTokenLayer::new(state)).route(
+        "/me",
+        web::get().to(|| async move {
+            for _ in 0..32 {
+                tokio::task::yield_now().await;
+            }
+            let id = StpUtil::get_login_id_as_string().await.expect("login id");
+            HttpResponse::Ok().body(id)
+        }),
+    ))
     .await;
 
     let req = test::TestRequest::get()
@@ -116,5 +102,5 @@ async fn actix_layer_survives_yield_for_stputil_current() {
     let resp = test::call_service(&app, req).await;
     assert!(resp.status().is_success());
     let body = test::read_body(resp).await;
-    assert_eq!(body.as_ref(), b"u-scope-actix");
+    assert_eq!(body.as_ref(), id.as_bytes());
 }

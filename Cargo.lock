@@ -354,6 +354,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03918c3dbd7701a85c6b9887732e2921175f26c350b4563841d0958c21d57e6d"
 
 [[package]]
+name = "argon2"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c3610892ee6e0cbce8ae2700349fcf8f98adb0dbfbee85aec3c9179d29cc072"
+dependencies = [
+ "base64ct",
+ "blake2",
+ "cpufeatures 0.2.17",
+ "password-hash",
+]
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -843,6 +855,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "blake2"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "46502ad458c9a52b69d4d4d32775c788b7a1b85e8bc9d482d92250fc0e3f8efe"
+dependencies = [
+ "digest 0.10.7",
+]
+
+[[package]]
 name = "blake3"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1039,6 +1060,12 @@ dependencies = [
  "crypto-common 0.1.7",
  "inout",
 ]
+
+[[package]]
+name = "cmov"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c9ea0ac24bc397ab3c98583a3c9ba74fa56b09a4449bbe172b9b1ddb016027a"
 
 [[package]]
 name = "combine"
@@ -1343,6 +1370,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ctutils"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d5515a3834141de9eafb9717ad39eea8247b5674e6066c404e8c4b365d2a29e"
+dependencies = [
+ "cmov",
+]
+
+[[package]]
 name = "curve25519-dalek"
 version = "4.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1481,6 +1517,7 @@ dependencies = [
  "block-buffer 0.12.0",
  "const-oid 0.10.2",
  "crypto-common 0.2.2",
+ "ctutils",
 ]
 
 [[package]]
@@ -1818,6 +1855,43 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
 dependencies = [
  "percent-encoding",
+]
+
+[[package]]
+name = "fory"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0c557c4a5d9d877bd8b094f0650ac2e688c1161efb780107b988a93e59bfbb86"
+dependencies = [
+ "fory-core",
+ "fory-derive",
+]
+
+[[package]]
+name = "fory-core"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d9e9720245b8181eb06f5178e41ae1e7cdfc429de79abed794dad2b2aca72b5b"
+dependencies = [
+ "byteorder",
+ "num-bigint",
+ "num-traits",
+ "num_enum",
+ "paste",
+ "thiserror 1.0.69",
+]
+
+[[package]]
+name = "fory-derive"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "426f8441358eef9a6186e9a8139ca5a624056d173c5029f75163a26eda8869bc"
+dependencies = [
+ "fory-core",
+ "proc-macro-crate 1.3.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -2309,6 +2383,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
  "digest 0.10.7",
+]
+
+[[package]]
+name = "hmac"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6303bc9732ae41b04cb554b844a762b4115a61bfaa81e3e83050991eeb56863f"
+dependencies = [
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3448,6 +3531,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "num_enum"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f646caf906c20226733ed5b1374287eb97e3c2a5c227ce668c1f2ce20ae57c9"
+dependencies = [
+ "num_enum_derive",
+]
+
+[[package]]
+name = "num_enum_derive"
+version = "0.5.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcbff9bc912032c62bf65ef1d5aea88983b420f4f839db1e9b0c281a25c9c799"
+dependencies = [
+ "proc-macro-crate 1.3.1",
+ "proc-macro2",
+ "quote",
+ "syn 1.0.109",
+]
+
+[[package]]
 name = "objc2"
 version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3538,6 +3642,23 @@ dependencies = [
  "smallvec",
  "windows-link",
 ]
+
+[[package]]
+name = "password-hash"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "346f04948ba92c43e8469c1ee6736c7563d71012b17d40745260fe106aac2166"
+dependencies = [
+ "base64ct",
+ "rand_core 0.6.4",
+ "subtle",
+]
+
+[[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
 name = "pear"
@@ -3718,7 +3839,7 @@ version = "3.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "056e2fea6de1cb240ffe23cfc4fc370b629f8be83b5f27e16b7acd5231a72de4"
 dependencies = [
- "proc-macro-crate",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -3818,6 +3939,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "353e1ca18966c16d9deb1c69278edbc5f194139612772bd9537af60ac231e1e6"
 dependencies = [
  "elliptic-curve",
+]
+
+[[package]]
+name = "proc-macro-crate"
+version = "1.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f4c021e1093a56626774e81216a4ce732a735e5bad4868a03f3ed65ca0c3919"
+dependencies = [
+ "once_cell",
+ "toml_edit 0.19.15",
 ]
 
 [[package]]
@@ -4504,9 +4635,11 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "sa-token-adapter"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
+ "fory",
  "http 1.4.0",
  "serde",
  "serde_json",
@@ -4516,13 +4649,18 @@ dependencies = [
 
 [[package]]
 name = "sa-token-core"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
+ "base64 0.22.1",
  "chrono",
+ "getrandom 0.2.17",
  "hex",
+ "hmac 0.13.0",
  "jsonwebtoken 10.4.0",
+ "reqwest",
  "sa-token-adapter",
  "sa-token-storage-memory",
  "serde",
@@ -4537,7 +4675,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-integration-tests"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "actix-web",
  "async-trait",
@@ -4559,7 +4697,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-macro"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4571,28 +4709,15 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-actix-web"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "sa-token-plugin-actix-web-v4",
  "sa-token-plugin-actix-web-v5",
 ]
 
 [[package]]
-name = "sa-token-plugin-actix-web-core"
-version = "0.1.18"
-dependencies = [
- "sa-token-adapter",
- "sa-token-core",
- "sa-token-storage-database",
- "sa-token-storage-memory",
- "sa-token-storage-redis",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sa-token-plugin-actix-web-v4"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "actix-web",
  "async-trait",
@@ -4600,7 +4725,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
- "sa-token-plugin-actix-web-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4613,9 +4738,9 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-actix-web-v5"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
- "sa-token-plugin-actix-web-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4623,7 +4748,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-axum"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "axum 0.8.9",
@@ -4632,6 +4757,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4643,28 +4769,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sa-token-plugin-common"
+version = "0.2.0"
+dependencies = [
+ "http 1.4.0",
+ "sa-token-adapter",
+ "sa-token-core",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "sa-token-plugin-gotham"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "sa-token-plugin-gotham-v074",
 ]
 
 [[package]]
-name = "sa-token-plugin-gotham-core"
-version = "0.1.18"
-dependencies = [
- "sa-token-adapter",
- "sa-token-core",
- "sa-token-storage-database",
- "sa-token-storage-memory",
- "sa-token-storage-redis",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sa-token-plugin-gotham-v074"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "gotham",
@@ -4675,7 +4800,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
- "sa-token-plugin-gotham-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4688,27 +4813,14 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-ntex"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "sa-token-plugin-ntex-v212",
 ]
 
 [[package]]
-name = "sa-token-plugin-ntex-core"
-version = "0.1.18"
-dependencies = [
- "sa-token-adapter",
- "sa-token-core",
- "sa-token-storage-database",
- "sa-token-storage-memory",
- "sa-token-storage-redis",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sa-token-plugin-ntex-v212"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "http 1.4.0",
@@ -4716,7 +4828,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
- "sa-token-plugin-ntex-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4728,13 +4840,14 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-poem"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "poem",
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4747,34 +4860,21 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-rocket"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "sa-token-plugin-rocket-v05",
 ]
 
 [[package]]
-name = "sa-token-plugin-rocket-core"
-version = "0.1.18"
-dependencies = [
- "sa-token-adapter",
- "sa-token-core",
- "sa-token-storage-database",
- "sa-token-storage-memory",
- "sa-token-storage-redis",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sa-token-plugin-rocket-v05"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "rocket",
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
- "sa-token-plugin-rocket-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4787,34 +4887,21 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-salvo"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "sa-token-plugin-salvo-v079",
 ]
 
 [[package]]
-name = "sa-token-plugin-salvo-core"
-version = "0.1.18"
-dependencies = [
- "sa-token-adapter",
- "sa-token-core",
- "sa-token-storage-database",
- "sa-token-storage-memory",
- "sa-token-storage-redis",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "sa-token-plugin-salvo-v079"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "http 1.4.0",
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
- "sa-token-plugin-salvo-core",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4827,7 +4914,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-tide"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-std",
  "async-trait",
@@ -4835,6 +4922,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4847,7 +4935,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-tonic"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "http 1.4.0",
@@ -4856,6 +4944,7 @@ dependencies = [
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4869,13 +4958,14 @@ dependencies = [
 
 [[package]]
 name = "sa-token-plugin-warp"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "http 1.4.0",
  "sa-token-adapter",
  "sa-token-core",
  "sa-token-macro",
+ "sa-token-plugin-common",
  "sa-token-storage-database",
  "sa-token-storage-memory",
  "sa-token-storage-redis",
@@ -4889,20 +4979,25 @@ dependencies = [
 
 [[package]]
 name = "sa-token-rust"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
+ "sa-token-adapter",
  "sa-token-core",
+ "sa-token-macro",
+ "sa-token-storage-database",
  "sa-token-storage-memory",
+ "sa-token-storage-redis",
  "serde_json",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
 name = "sa-token-storage-database"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4915,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-storage-memory"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "chrono",
@@ -4926,7 +5021,7 @@ dependencies = [
 
 [[package]]
 name = "sa-token-storage-redis"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "redis",
@@ -5046,7 +5141,7 @@ version = "0.79.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc781932226f47832bff8e11d32d2c799081b08116cdfe212712095aa908a7af"
 dependencies = [
- "proc-macro-crate",
+ "proc-macro-crate 3.5.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -6205,6 +6300,17 @@ dependencies = [
 
 [[package]]
 name = "toml_edit"
+version = "0.19.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5bb770da30e5cbfde35a2d7b9b8a2c4b8ef89548a7a6aeab5c9a576e3e7421"
+dependencies = [
+ "indexmap 2.14.0",
+ "toml_datetime 0.6.11",
+ "winnow 0.5.40",
+]
+
+[[package]]
+name = "toml_edit"
 version = "0.22.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "41fe8c660ae4257887cf66394862d21dbca4a6ddd26f04a3560410406a2f819a"
@@ -6290,7 +6396,7 @@ dependencies = [
 
 [[package]]
 name = "tonic-full-example"
-version = "0.1.18"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "prost",
@@ -7219,6 +7325,15 @@ name = "windows_x86_64_msvc"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6bbff5f0aada427a1e5a6da5f1f98158182f26556f345ac9e04d36d0ebed650"
+
+[[package]]
+name = "winnow"
+version = "0.5.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f593a95398737aeed53e489c785df13f3618e41dbcd6718c6addbf1395aa6876"
+dependencies = [
+ "memchr",
+]
 
 [[package]]
 name = "winnow"

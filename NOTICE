@@ -1,0 +1,14 @@
+sa-token-rust
+Copyright 2024-2026 sa-token-rust contributors
+
+This product is an independent Rust implementation licensed under
+MIT OR Apache-2.0 (see LICENSE-MIT and LICENSE-APACHE).
+
+Feature naming and authentication semantics were inspired by the
+Dromara sa-token project:
+
+  https://github.com/dromara/sa-token
+  Licensed under the Apache License, Version 2.0
+
+No source files from that repository are copied into this tree.
+Third-party crate licenses appear in each crate's Cargo.toml.

@@ -22,3 +22,13 @@ anyhow = "1.0.98"
 urlencoding = "2.1.3"
 futures = "0.3.31"
 tokio = { version = "1.45.1", features = ["full"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+

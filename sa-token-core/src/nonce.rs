@@ -206,326 +206,168 @@
 //!    - 将 nonce 与认证结合使用，而不是替代认证
 //! ```
 
-use std::sync::Arc;
+use crate::config::SaTokenConfig;
+use crate::dao::SaTokenDao;
+use crate::error::{SaTokenError, SaTokenResult};
 use chrono::{DateTime, Utc};
 use sa_token_adapter::storage::SaStorage;
-use crate::error::{SaTokenError, SaTokenResult};
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
+/// Nonce storage record (A2-1) | Nonce 存储记录
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NonceRecord {
+    /// Associated login id | 关联登录 ID
+    pub login_id: String,
+    /// Creation time (RFC 3339) | 创建时间（RFC 3339）
+    pub created_at: String,
+}
+
+impl NonceRecord {
+    /// Build a new record for `login_id` | 为 login_id 新建记录
+    pub fn new(login_id: impl Into<String>) -> Self {
+        Self {
+            login_id: login_id.into(),
+            created_at: Utc::now().to_rfc3339(),
+        }
+    }
+}
+
 /// Nonce Manager | Nonce 管理器
-///
-/// Manages nonce generation and validation to prevent replay attacks
-/// 管理 nonce 的生成和验证以防止重放攻击
 #[derive(Clone)]
 pub struct NonceManager {
-    storage: Arc<dyn SaStorage>,
+    dao: Arc<SaTokenDao>,
     timeout: i64,
 }
 
+impl std::fmt::Debug for NonceManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("NonceManager { .. }")
+    }
+}
+
 impl NonceManager {
-    /// Create new nonce manager | 创建新的 nonce 管理器
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `storage` - Storage backend | 存储后端
-    /// * `timeout` - Nonce validity period in seconds | Nonce 有效期（秒）
+    /// Create from Dao | 从 Dao 创建
+    pub fn from_dao(dao: Arc<SaTokenDao>, timeout: i64) -> Self {
+        Self { dao, timeout }
+    }
+
+    /// Legacy wrapper: builds a Dao with default config + given timeout.
+    /// 遗留包装：用默认配置构造 Dao。
     pub fn new(storage: Arc<dyn SaStorage>, timeout: i64) -> Self {
-        Self { storage, timeout }
+        let cfg = SaTokenConfig {
+            nonce_timeout: timeout,
+            ..SaTokenConfig::default()
+        };
+        Self::from_dao(Arc::new(SaTokenDao::new(storage, Arc::new(cfg))), timeout)
+    }
+
+    fn ttl(&self) -> Option<std::time::Duration> {
+        if self.timeout > 0 {
+            Some(std::time::Duration::from_secs(self.timeout as u64))
+        } else {
+            None
+        }
     }
 
     /// Generate a new nonce | 生成新的 nonce
-    ///
-    /// Generates a unique nonce using timestamp + UUID to ensure uniqueness.
-    /// 使用时间戳 + UUID 生成唯一的 nonce 以确保唯一性。
-    ///
-    /// # Returns | 返回
-    ///
-    /// Unique nonce string in format: `nonce_{timestamp_ms}_{uuid}`
-    /// 格式为 `nonce_{时间戳_毫秒}_{uuid}` 的唯一 nonce 字符串
-    ///
-    /// # Format | 格式
-    ///
-    /// ```text
-    /// nonce_1234567890123_abc123def456
-    ///   │         │            │
-    ///   │         │            └─ UUID (32 hex chars)
-    ///   │         └─ Timestamp in milliseconds
-    ///   └─ Prefix
-    /// ```
-    ///
-    /// # Example | 示例
-    ///
-    /// ```ignore
-    /// let nonce = nonce_manager.generate();
-    /// // Returns: "nonce_1701234567890_a1b2c3d4e5f6..."
-    /// ```
     pub fn generate(&self) -> String {
-        format!("nonce_{}_{}", Utc::now().timestamp_millis(), Uuid::new_v4().simple())
+        format!(
+            "nonce_{}_{}",
+            Utc::now().timestamp_millis(),
+            Uuid::new_v4().simple()
+        )
     }
 
     /// Store and mark nonce as used | 存储并标记 nonce 为已使用
-    ///
-    /// Stores the nonce in storage with TTL, marking it as "consumed".
-    /// 将 nonce 以 TTL 存储在存储中，标记为"已消费"。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `nonce` - Nonce to store | 要存储的 nonce
-    /// * `login_id` - Associated user ID | 关联的用户ID
-    ///
-    /// # Storage Key | 存储键
-    ///
-    /// `sa:nonce:{nonce}` → `{"login_id": "...", "created_at": "..."}`
-    ///
-    /// # TTL Behavior | TTL 行为
-    ///
-    /// The nonce is automatically removed after the timeout period.
-    /// Nonce 会在超时期后自动移除。
-    ///
-    /// # Example | 示例
-    ///
-    /// ```ignore
-    /// nonce_manager.store("nonce_123_abc", "user_001").await?;
-    /// // Storage now contains: sa:nonce:nonce_123_abc (expires after timeout)
-    /// ```
     pub async fn store(&self, nonce: &str, login_id: &str) -> SaTokenResult<()> {
-        let key = format!("sa:nonce:{}", nonce);
-        let value = serde_json::json!({
-            "login_id": login_id,
-            "created_at": Utc::now().to_rfc3339(),
-        }).to_string();
+        let key = self.dao.keys().nonce(nonce);
+        let record = NonceRecord::new(login_id);
+        self.dao.set_object(&key, &record, self.ttl()).await
+    }
 
-        // Set TTL to automatically expire the nonce
-        let ttl = Some(std::time::Duration::from_secs(self.timeout as u64));
-        self.storage.set(&key, &value, ttl)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?;
-
-        Ok(())
+    /// Retrieve nonce record for audit (optional) | 检索 nonce 记录（审计可选）
+    pub async fn get_record(&self, nonce: &str) -> SaTokenResult<Option<NonceRecord>> {
+        let key = self.dao.keys().nonce(nonce);
+        self.dao.get_object(&key).await
     }
 
     /// Validate nonce and ensure it hasn't been used | 验证 nonce 并确保未被使用
-    ///
-    /// Checks if the nonce exists in storage. If it exists, it has been used.
-    /// 检查 nonce 是否存在于存储中。如果存在，则已被使用。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `nonce` - Nonce to validate | 要验证的 nonce
-    ///
-    /// # Returns | 返回
-    ///
-    /// * `Ok(true)` - Valid (not used yet) | 有效（尚未使用）
-    /// * `Ok(false)` - Invalid (already used) | 无效（已使用）
-    ///
-    /// # Logic | 逻辑
-    ///
-    /// ```text
-    /// Nonce NOT in storage → Valid (can be used)
-    /// Nonce IN storage     → Invalid (already used)
-    /// 
-    /// Nonce 不在存储中 → 有效（可以使用）
-    /// Nonce 在存储中   → 无效（已使用）
-    /// ```
-    ///
-    /// # Example | 示例
-    ///
-    /// ```ignore
-    /// let is_valid = nonce_manager.validate("nonce_123").await?;
-    /// if is_valid {
-    ///     // Proceed with operation
-    /// } else {
-    ///     // Reject: nonce already used
-    /// }
-    /// ```
     pub async fn validate(&self, nonce: &str) -> SaTokenResult<bool> {
-        let key = format!("sa:nonce:{}", nonce);
-        
-        // Check if nonce exists in storage
-        // 检查 nonce 是否存在于存储中
-        let exists = self.storage.get(&key)
-            .await
-            .map_err(|e| SaTokenError::StorageError(e.to_string()))?
-            .is_some();
-
-        // Valid if NOT exists (not used yet)
-        // 不存在则有效（尚未使用）
-        Ok(!exists)
+        let key = self.dao.keys().nonce(nonce);
+        Ok(self.dao.get_string(&key).await?.is_none())
     }
 
-    /// Validate and consume nonce in one operation | 一次操作验证并消费 nonce
-    ///
-    /// This is the **primary method** for using nonces in Sa-Token.
-    /// It checks if the nonce is valid (not used) and immediately marks it as used.
-    /// 这是在 Sa-Token 中使用 nonce 的**主要方法**。
-    /// 它检查 nonce 是否有效（未使用）并立即将其标记为已使用。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `nonce` - Nonce to validate and consume | 要验证和消费的 nonce
-    /// * `login_id` - Associated user ID | 关联的用户ID
-    ///
-    /// # Returns | 返回
-    ///
-    /// * `Ok(())` - Nonce is valid and now consumed | Nonce 有效且已消费
-    /// * `Err(NonceAlreadyUsed)` - Nonce has already been used | Nonce 已被使用
-    /// * `Err(StorageError)` - Storage operation failed | 存储操作失败
-    ///
-    /// # Security | 安全性
-    ///
-    /// This operation is **atomic** from the application perspective:
-    /// 此操作从应用程序角度来看是**原子性**的：
-    ///
-    /// 1. Check if nonce exists (validate)
-    /// 2. If valid, store it immediately (consume)
-    /// 3. Return success
-    ///
-    /// If two requests use the same nonce simultaneously, only one will succeed.
-    /// 如果两个请求同时使用相同的 nonce，只有一个会成功。
-    ///
-    /// # Integration with Login | 与登录集成
-    ///
-    /// ```ignore
-    /// // Inside SaTokenManager::login_with_token_info()
-    /// if let Some(nonce) = &token_info.nonce {
-    ///     self.nonce_manager
-    ///         .validate_and_consume(nonce, &login_id)
-    ///         .await?; // ← Prevents replay attacks
-    /// }
-    /// ```
-    ///
-    /// # Example | 示例
-    ///
-    /// ```ignore
-    /// // ✅ First use: Success
-    /// nonce_manager.validate_and_consume("nonce_123", "user_001").await?;
-    /// println!("Login successful");
-    ///
-    /// // ❌ Second use: Error
-    /// let result = nonce_manager.validate_and_consume("nonce_123", "user_001").await;
-    /// assert!(matches!(result, Err(SaTokenError::NonceAlreadyUsed)));
-    /// ```
+    /// Validate and consume nonce atomically via set_if_absent.
+    /// 通过 set_if_absent 原子校验并消费 nonce。
     pub async fn validate_and_consume(&self, nonce: &str, login_id: &str) -> SaTokenResult<()> {
-        // 1. Validate: check if nonce has NOT been used
-        // 验证：检查 nonce 是否未被使用
-        if !self.validate(nonce).await? {
+        if nonce.trim().is_empty() {
+            return Err(SaTokenError::InvalidToken("nonce must not be empty".into()));
+        }
+        let key = self.dao.keys().nonce(nonce);
+        let record = NonceRecord::new(login_id);
+        let raw = self.dao.encode(&record)?;
+        let occupied = self.dao.set_if_absent(&key, &raw, self.ttl()).await?;
+        if !occupied {
             return Err(SaTokenError::NonceAlreadyUsed);
         }
-
-        // 2. Consume: store nonce to mark as used
-        // 消费：存储 nonce 以标记为已使用
-        self.store(nonce, login_id).await?;
-        
         Ok(())
     }
 
     /// Extract timestamp from nonce and check if it's within valid time window
     /// 从 nonce 中提取时间戳并检查是否在有效时间窗口内
-    ///
-    /// Provides **additional security** by validating the nonce timestamp.
-    /// This prevents time-based attacks and ensures nonces are fresh.
-    /// 通过验证 nonce 时间戳提供**额外的安全性**。
-    /// 这可以防止基于时间的攻击并确保 nonce 是新鲜的。
-    ///
-    /// # Arguments | 参数
-    ///
-    /// * `nonce` - Nonce to check | 要检查的 nonce
-    /// * `window_seconds` - Maximum age of nonce in seconds | Nonce 的最大年龄（秒）
-    ///
-    /// # Returns | 返回
-    ///
-    /// * `Ok(true)` - Timestamp is within the time window | 时间戳在时间窗口内
-    /// * `Ok(false)` - Timestamp is outside the time window (too old or future) | 时间戳在窗口外（太旧或未来）
-    /// * `Err(InvalidNonceFormat)` - Nonce format is invalid | Nonce 格式无效
-    /// * `Err(InvalidNonceTimestamp)` - Timestamp cannot be parsed | 时间戳无法解析
-    ///
-    /// # Use Case | 使用场景
-    ///
-    /// ```ignore
-    /// // Validate nonce and its timestamp
-    /// let nonce = request.get_nonce();
-    ///
-    /// // Check timestamp: max 60 seconds old
-    /// if !nonce_manager.check_timestamp(&nonce, 60)? {
-    ///     return Err("Nonce too old");
-    /// }
-    ///
-    /// // Then validate and consume
-    /// nonce_manager.validate_and_consume(&nonce, user_id).await?;
-    /// ```
-    ///
-    /// # Nonce Format | Nonce 格式
-    ///
-    /// Expected format: `nonce_{timestamp_ms}_{uuid}`
-    /// 期望格式：`nonce_{时间戳_毫秒}_{uuid}`
-    ///
-    /// # Security Note | 安全说明
-    ///
-    /// This check should be used **in addition to** `validate_and_consume()`,
-    /// not as a replacement. It provides defense-in-depth.
-    /// 此检查应与 `validate_and_consume()` **一起使用**，而不是替代。
-    /// 它提供了深度防御。
     pub fn check_timestamp(&self, nonce: &str, window_seconds: i64) -> SaTokenResult<bool> {
-        // Parse nonce format: nonce_TIMESTAMP_UUID
-        // 解析 nonce 格式：nonce_时间戳_UUID
         let parts: Vec<&str> = nonce.split('_').collect();
-        if parts.len() < 3 || parts[0] != "nonce" {
+        if parts.len() < 3 {
             return Err(SaTokenError::InvalidNonceFormat);
         }
-
-        // Extract and parse timestamp
-        // 提取并解析时间戳
-        let timestamp_ms = parts[1].parse::<i64>()
+        let timestamp_ms: i64 = parts
+            .get(1)
+            .ok_or(SaTokenError::InvalidNonceFormat)?
+            .parse()
             .map_err(|_| SaTokenError::InvalidNonceTimestamp)?;
-
-        let nonce_time = DateTime::from_timestamp_millis(timestamp_ms)
-            .ok_or(SaTokenError::InvalidNonceTimestamp)?;
-
-        // Calculate time difference
-        // 计算时间差
-        let now = Utc::now();
-        let diff = (now - nonce_time).num_seconds().abs();
-
-        // Check if within time window
-        // 检查是否在时间窗口内
-        Ok(diff <= window_seconds)
+        let now_ms = Utc::now().timestamp_millis();
+        let age_seconds = (now_ms - timestamp_ms) / 1000;
+        Ok(age_seconds >= 0 && age_seconds <= window_seconds)
     }
 
-    /// Clean up expired nonces (implementation depends on storage)
-    /// 清理过期的 nonce（实现依赖于存储）
-    ///
-    /// # Note | 注意
-    ///
-    /// Most storage backends (Redis, Memcached) automatically expire keys with TTL.
-    /// This method is provided for storage backends that don't support TTL.
-    /// 大多数存储后端（Redis、Memcached）会自动过期带 TTL 的键。
-    /// 此方法为不支持 TTL 的存储后端提供。
-    ///
-    /// # Automatic Cleanup | 自动清理
-    ///
-    /// - **Redis**: Uses EXPIRE command, automatic cleanup
-    /// - **Memory**: Built-in TTL support, automatic cleanup
-    /// - **Database**: May need manual cleanup (implement here)
-    ///
-    /// # Manual Implementation | 手动实现
-    ///
-    /// For databases without TTL support:
-    /// 对于不支持 TTL 的数据库：
-    ///
-    /// ```ignore
-    /// pub async fn cleanup_expired(&self) -> SaTokenResult<()> {
-    ///     let cutoff = Utc::now() - Duration::seconds(self.timeout);
-    ///     // DELETE FROM nonces WHERE created_at < cutoff
-    ///     Ok(())
-    /// }
-    /// ```
-    pub async fn cleanup_expired(&self) -> SaTokenResult<()> {
-        // Storage with TTL support will auto-cleanup
-        // 支持 TTL 的存储会自动清理
-        // 
-        // This is a no-op for Redis/Memory storage
-        // 对于 Redis/Memory 存储，这是一个空操作
-        Ok(())
+    /// Scan and remove expired nonce records | 扫描并删除过期 nonce 记录
+    pub async fn cleanup_expired(&self) -> SaTokenResult<usize> {
+        if self.timeout <= 0 {
+            return Ok(0);
+        }
+        let pattern = self.dao.keys().scan_pattern("nonce", None);
+        let mut removed = 0usize;
+        let mut cursor = 0u64;
+        let cutoff = Utc::now() - chrono::Duration::seconds(self.timeout);
+
+        loop {
+            let page = match self.dao.scan(&pattern, cursor, 200).await {
+                Ok(p) => p,
+                Err(SaTokenError::StorageError(ref msg)) if msg.contains("Unsupported") => {
+                    tracing::warn!("nonce cleanup skipped: scan unsupported on this backend");
+                    break;
+                }
+                Err(e) => return Err(e),
+            };
+
+            for key in page.keys {
+                if let Some(record) = self.dao.get_object::<NonceRecord>(&key).await? {
+                    if let Ok(dt) = DateTime::parse_from_rfc3339(&record.created_at) {
+                        if dt.with_timezone(&Utc) < cutoff {
+                            self.dao.delete(&key).await?;
+                            removed += 1;
+                        }
+                    }
+                }
+            }
+            if page.next_cursor == 0 {
+                break;
+            }
+            cursor = page.next_cursor;
+        }
+        Ok(removed)
     }
 }
 
@@ -571,7 +413,10 @@ mod tests {
         let nonce = nonce_mgr.generate();
 
         // First use should succeed
-        nonce_mgr.validate_and_consume(&nonce, "user_123").await.unwrap();
+        nonce_mgr
+            .validate_and_consume(&nonce, "user_123")
+            .await
+            .unwrap();
 
         // Second use should fail
         let result = nonce_mgr.validate_and_consume(&nonce, "user_123").await;
@@ -592,4 +437,3 @@ mod tests {
         assert!(nonce_mgr.check_timestamp(&nonce, 1).unwrap());
     }
 }
-

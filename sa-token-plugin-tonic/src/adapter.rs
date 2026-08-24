@@ -7,8 +7,8 @@
 // 新增 TonicCapturedRequest 供 run_auth_flow 使用
 
 use http::{HeaderMap, Request as HttpRequest};
-use sa_token_adapter::{SaRequest, SaResponse, CookieOptions};
 use sa_token_adapter::utils::parse_cookies;
+use sa_token_adapter::{CookieOptions, SaRequest, SaResponse};
 use serde::Serialize;
 use std::collections::HashMap;
 
@@ -54,7 +54,7 @@ impl TonicCapturedRequest {
         if let Some(p) = request.extensions().get::<crate::error::SaTokenGrpcPath>() {
             return p.0.clone();
         }
-        if let Some(m) = request.extensions().get::<tonic::GrpcMethod>() {
+        if let Some(m) = request.extensions().get::<tonic::GrpcMethod<'_>>() {
             return format!("/{}/{}", m.service(), m.method());
         }
         String::new()

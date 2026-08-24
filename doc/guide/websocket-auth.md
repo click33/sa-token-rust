@@ -1,133 +1,76 @@
-# WebSocket Authentication Guide
+# WebSocket authentication
 
-## English
+English | [中文](/zh/guide/websocket-auth.md)
 
-### Overview
+Use `WsAuthManager` at handshake time to read a token from headers / query and validate it. Token reading matches HTTP (`token_io`, including optional `token_prefix`).
 
-The WebSocket Authentication module provides secure authentication for WebSocket connections in sa-token-rust. It supports multiple token extraction methods and integrates seamlessly with the core authentication system.
+## When to use
 
-### Features
+- WebSocket / long-lived connections should reuse the same login state as HTTP.
+- You need `verify_token` for a light check, or a custom `WsTokenExtractor`.
 
-- **Multiple Token Sources**
-  - Authorization Header (Bearer Token)
-  - WebSocket Protocol Header
-  - Query Parameters
-- **Token Validation** - Automatic expiration checking
-- **Session Management** - Unique session IDs for each connection
-- **Extensible** - Custom token extractors
-
-### Quick Start
-
-#### 1. Basic Usage
+## Minimal example
 
 ```rust
-use sa_token_core::{SaTokenManager, SaTokenConfig, WsAuthManager};
-use sa_token_storage_memory::MemoryStorage;
-use std::sync::Arc;
+use sa_token_core::WsAuthManager;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize manager
-    let storage = Arc::new(MemoryStorage::new());
-    let config = SaTokenConfig::default();
-    let manager = Arc::new(SaTokenManager::new(storage, config));
-    
-    // Create WebSocket auth manager
-    let ws_auth = WsAuthManager::new(manager.clone());
-    
-    // User logs in
-    let token = manager.login("user123").await?;
-    
-    // Authenticate WebSocket connection
-    let mut headers = HashMap::new();
-    headers.insert(
-        "Authorization".to_string(),
-        format!("Bearer {}", token.as_str())
-    );
-    
-    let auth_info = ws_auth.authenticate(&headers, &HashMap::new()).await?;
-    
-    println!("User {} connected", auth_info.login_id);
-    println!("Session ID: {}", auth_info.session_id);
-    
-    Ok(())
-}
+let ws_auth = WsAuthManager::new(Arc::new(manager));
+
+let mut headers = HashMap::new();
+headers.insert(
+    "Authorization".into(),
+    format!("Bearer {}", token_str),
+);
+let query = HashMap::new();
+
+let info = ws_auth.authenticate(&headers, &query).await?;
+// info.login_id / info.token / info.session_id
+
+let login_id = ws_auth.verify_token(&info.token).await?;
 ```
 
-#### 2. Token from Query Parameter
+On success a Login event is published with `login_type = "websocket"`. If the Manager has an `OnlineManager`, it calls `mark_online` (presence is connection-scoped — not the same as “has an HTTP token”).
+
+## How the token is read
+
+`authenticate`:
+
+1. Calls `WsTokenExtractor::extract_token` first (default: Authorization / common query keys).
+2. If empty, falls back to `token_io::read_token_from_maps(headers, query, &config)` (same `is_read_*` rules as HTTP, map-shaped).
+3. Applies `apply_token_prefix` when configured.
+
+Custom extractor:
 
 ```rust
-// Extract token from URL query parameter
-let mut query = HashMap::new();
-query.insert("token".to_string(), token.as_str().to_string());
-
-let auth_info = ws_auth.authenticate(&HashMap::new(), &query).await?;
-```
-
-#### 3. Custom Token Extractor
-
-```rust
-use sa_token_core::WsTokenExtractor;
+use sa_token_core::{WsAuthManager, WsTokenExtractor};
 use async_trait::async_trait;
+use std::sync::Arc;
 
-struct CustomExtractor;
+struct QueryOnly;
 
 #[async_trait]
-impl WsTokenExtractor for CustomExtractor {
+impl WsTokenExtractor for QueryOnly {
     async fn extract_token(
         &self,
-        headers: &HashMap<String, String>,
-        query: &HashMap<String, String>
+        _headers: &HashMap<String, String>,
+        query: &HashMap<String, String>,
     ) -> Option<String> {
-        // Custom extraction logic
-        headers.get("X-Custom-Token").cloned()
+        query.get("token").cloned()
     }
 }
 
-// Use custom extractor
-let custom_extractor = Arc::new(CustomExtractor);
-let ws_auth = WsAuthManager::with_extractor(manager, custom_extractor);
+let ws_auth = WsAuthManager::with_extractor(Arc::new(manager), Arc::new(QueryOnly));
 ```
 
-### API Reference
+## Session helpers
 
-#### WsAuthManager
+- `refresh_ws_session(&auth_info)`: verify token; auto-renew if configured; refresh online activity.
+- `end_ws_session(&auth_info)`: end the connection-side session and try `mark_offline`.
 
-**Methods:**
-- `new(manager)` - Create with default extractor
-- `with_extractor(manager, extractor)` - Create with custom extractor
-- `authenticate(headers, query)` - Authenticate connection
-- `verify_token(token)` - Verify token validity
-- `refresh_ws_session(auth_info)` - Refresh session
+## Related
 
-#### WsAuthInfo
-
-**Fields:**
-- `login_id` - User identifier
-- `token` - Authentication token
-- `session_id` - Unique session ID
-- `connect_time` - Connection timestamp
-- `metadata` - Custom metadata
-
-### Best Practices
-
-1. **Always verify tokens on reconnection**
-2. **Use HTTPS/WSS in production**
-3. **Implement token refresh for long-lived connections**
-4. **Handle token expiration gracefully**
-5. **Log authentication events for security auditing**
-
----
-
-## Related Documentation
-
-- [Online User Management](/guide/online-user-management.md)
-- [Distributed Session](/guide/distributed-session.md)
-- [Event Listener Guide](/guide/event-listener.md)
-- [JWT Guide](/guide/jwt.md)
-
-## License
-
-MIT OR Apache-2.0
-
+- [Online users](/guide/online-user-management.md)
+- [Framework integration](/guide/framework-integration.md)
+- [StpUtil](/guide/stp-util.md)

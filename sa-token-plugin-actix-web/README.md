@@ -6,7 +6,7 @@
 
 ```rust
 // 在你的 Cargo.toml 中添加依赖
-// sa-token-plugin-actix-web = { version = "0.1.13", features = ["redis"] }
+// sa-token-plugin-actix-web = { version = "0.2.0", features = ["redis"] }
 
 use actix_web::{web, App, HttpServer};
 use sa_token_plugin_actix_web::{
@@ -19,7 +19,7 @@ fn init_sa_token() -> SaTokenState {
     SaTokenState::builder()
         .token_name("my-token")
         .timeout(7200)
-        .activity_timeout(1800)
+        .active_timeout(1800)
         .build()
 }
 
@@ -103,16 +103,8 @@ async fn admin_only(login_id: LoginId) -> Result<impl actix_web::Responder, acti
 
 ```toml
 [dependencies]
-sa-token-plugin-actix-web = { version = "0.1.13", features = ["redis"] }
+sa-token-plugin-actix-web = { version = "0.2.0", features = ["redis"] }
 ```
 
 这个依赖会自动包含所有必要的 Sa-Token 组件，包括核心功能和存储实现。
-
-## 版本历史
-
-### 0.1.13
-- ✨ 新增路径鉴权功能，支持基于路径的细粒度访问控制
-- 🔧 优化中间件实现，减少代码重复
-
-### 0.1.11
-- 基础功能实现
+共享类型在 `sa-token-plugin-common`，由本 crate 再导出。

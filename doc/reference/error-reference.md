@@ -1,237 +1,141 @@
-# SaToken Error Reference
+# Error Reference
 
-## English
+[中文](/zh/reference/error-reference.md) | English
 
-### Error Categories
+The unified core error type is `SaTokenError` (in `sa-token-core`). User-visible `Display` / `message()` text is **English** (from `#[error(...)]`).
 
-sa-token-rust provides 32 error types organized into 10 categories:
+## SaTokenResult
 
-#### 1. Basic Token Errors
+```rust
+pub type SaTokenResult<T> = Result<T, SaTokenError>;
+```
 
-##### TokenNotFound
-- **Message**: "Token not found or expired"
-- **Description**: The requested token does not exist in storage or has expired
-- **Common Causes**: Token was never created, expired naturally, or manually deleted
-- **Solution**: User needs to log in again to obtain a new token
+Most business and library APIs return this alias. Use `err.is_auth_error()` / `err.is_authz_error()` for coarse classification.
 
-##### InvalidToken
-- **Message**: "Token is invalid: {reason}"
-- **Description**: The token format or content is invalid
-- **Common Causes**: Corrupted token, tampered token, or wrong token format
-- **Solution**: Verify token integrity and ensure correct token format
-
-##### TokenExpired
-- **Message**: "Token has expired"
-- **Description**: The token has passed its expiration time
-- **Common Causes**: Token timeout exceeded configured duration
-- **Solution**: Use refresh token to get a new access token or re-authenticate
-
-#### 2. Authentication Errors
-
-##### NotLogin
-- **Message**: "User not logged in"
-- **Description**: User is attempting to access a protected resource without authentication
-- **Common Causes**: No token provided, token not found in request
-- **Solution**: User must log in first to obtain a valid token
-
-#### 3. Authorization Errors
-
-##### PermissionDenied
-- **Message**: "Permission denied: missing permission '{permission}'"
-- **Description**: User lacks the required permission to perform the action
-- **Common Causes**: Insufficient permissions assigned to the user
-- **Solution**: Grant the required permission to the user or role
-
-##### RoleDenied
-- **Message**: "Role denied: missing role '{role}'"
-- **Description**: User does not have the required role
-- **Common Causes**: User not assigned to the necessary role
-- **Solution**: Assign the required role to the user
-
-#### 4. Account Status Errors
-
-##### AccountBanned
-- **Message**: "Account is banned until {time}"
-- **Description**: The account has been temporarily or permanently banned
-- **Common Causes**: Violation of terms, security issues, or administrative action
-- **Solution**: Wait until ban expires or contact administrator
-
-##### AccountKickedOut
-- **Message**: "Account is kicked out"
-- **Description**: User session has been forcefully terminated
-- **Common Causes**: Administrator kicked the user, concurrent login on another device
-- **Solution**: User needs to log in again
-
-#### 5. Session Errors
-
-##### SessionNotFound
-- **Message**: "Session not found"
-- **Description**: The session does not exist or has been deleted
-- **Common Causes**: Session expired, manually deleted, or never created
-- **Solution**: Establish a new session by logging in
-
-#### 6. Nonce Errors
-
-##### NonceAlreadyUsed
-- **Message**: "Nonce has been used, possible replay attack detected"
-- **Description**: The nonce has already been consumed, indicating a potential replay attack
-- **Common Causes**: Duplicate request submission, replay attack attempt
-- **Solution**: Generate a new nonce for each request
-
-##### InvalidNonceFormat
-- **Message**: "Invalid nonce format"
-- **Description**: The nonce does not follow the expected format
-- **Common Causes**: Corrupted nonce, manually crafted invalid nonce
-- **Solution**: Use the standard nonce generation method
-
-##### InvalidNonceTimestamp
-- **Message**: "Nonce timestamp is invalid or expired"
-- **Description**: The timestamp embedded in the nonce is invalid or outside the valid time window
-- **Common Causes**: System time drift, expired nonce, or tampered timestamp
-- **Solution**: Synchronize system time and generate a fresh nonce
-
-#### 7. Refresh Token Errors
-
-##### RefreshTokenNotFound
-- **Message**: "Refresh token not found or expired"
-- **Description**: The refresh token does not exist or has expired
-- **Common Causes**: Never issued, expired, or revoked
-- **Solution**: User must re-authenticate to get a new refresh token
-
-##### RefreshTokenInvalidData
-- **Message**: "Invalid refresh token data"
-- **Description**: The stored refresh token data is corrupted or malformed
-- **Common Causes**: Storage corruption, tampering, or serialization error
-- **Solution**: User must re-authenticate
-
-##### RefreshTokenMissingLoginId
-- **Message**: "Missing login_id in refresh token"
-- **Description**: The refresh token is missing the required login_id field
-- **Common Causes**: Data corruption or incomplete token generation
-- **Solution**: Generate a new refresh token
-
-##### RefreshTokenInvalidExpireTime
-- **Message**: "Invalid expire time format in refresh token"
-- **Description**: The expiration time in refresh token cannot be parsed
-- **Common Causes**: Incorrect date format or corrupted data
-- **Solution**: Generate a new refresh token with correct format
-
-#### 8. Token Validation Errors
-
-##### TokenEmpty
-- **Message**: "Token is empty"
-- **Description**: No token value provided
-- **Common Causes**: Empty string passed as token
-- **Solution**: Provide a valid token value
-
-##### TokenTooShort
-- **Message**: "Token is too short"
-- **Description**: Token length is below minimum required (8 characters)
-- **Common Causes**: Truncated or invalid token
-- **Solution**: Provide a complete valid token
-
-##### LoginIdNotNumber
-- **Message**: "Login ID is not a valid number"
-- **Description**: Failed to parse login ID as a numeric value
-- **Common Causes**: Non-numeric login ID when numeric is expected
-- **Solution**: Ensure login ID format matches expected type
-
-#### 9. OAuth2 Errors
-
-##### OAuth2ClientNotFound
-- **Message**: "OAuth2 client not found"
-- **Description**: The OAuth2 client ID does not exist
-- **Common Causes**: Unregistered client or incorrect client ID
-- **Solution**: Register the client or verify client ID
-
-##### OAuth2InvalidCredentials
-- **Message**: "Invalid client credentials"
-- **Description**: Client ID and secret combination is invalid
-- **Common Causes**: Wrong secret, mistyped credentials
-- **Solution**: Verify client credentials are correct
-
-##### OAuth2ClientIdMismatch
-- **Message**: "Client ID mismatch"
-- **Description**: Client ID doesn't match the expected value
-- **Common Causes**: Using wrong client ID for authorization code or refresh token
-- **Solution**: Use the correct client ID that initiated the flow
-
-##### OAuth2RedirectUriMismatch
-- **Message**: "Redirect URI mismatch"
-- **Description**: Redirect URI doesn't match registered URIs
-- **Common Causes**: URI not in whitelist, typo in URI
-- **Solution**: Use a registered redirect URI
-
-##### OAuth2CodeNotFound
-- **Message**: "Authorization code not found or expired"
-- **Description**: Authorization code doesn't exist or has expired
-- **Common Causes**: Code already used, expired (typically 10 minutes)
-- **Solution**: Request a new authorization code
-
-##### OAuth2AccessTokenNotFound
-- **Message**: "Access token not found or expired"
-- **Description**: OAuth2 access token not found or expired
-- **Common Causes**: Token expired (typically 1 hour), revoked, or never issued
-- **Solution**: Refresh token or re-authorize
-
-##### OAuth2RefreshTokenNotFound
-- **Message**: "Refresh token not found or expired"
-- **Description**: OAuth2 refresh token not found or expired
-- **Common Causes**: Token expired (typically 30 days), revoked, or never issued
-- **Solution**: User must re-authorize
-
-##### OAuth2InvalidRefreshToken
-- **Message**: "Invalid refresh token data"
-- **Description**: Refresh token data is corrupted or invalid
-- **Common Causes**: Data corruption, tampering
-- **Solution**: Re-authorize to get new tokens
-
-##### OAuth2InvalidScope
-- **Message**: "Invalid scope data"
-- **Description**: Scope data is invalid or corrupted
-- **Common Causes**: Invalid scope format, unauthorized scope request
-- **Solution**: Request valid scopes only
-
-#### 10. System Errors
-
-##### StorageError
-- **Message**: "Storage error: {details}"
-- **Description**: Error occurred while accessing storage backend
-- **Common Causes**: Database connection failure, Redis unavailable, network issues
-- **Solution**: Check storage backend status and connectivity
-
-##### ConfigError
-- **Message**: "Configuration error: {details}"
-- **Description**: Configuration is invalid or missing
-- **Common Causes**: Missing required config, invalid config values
-- **Solution**: Review and fix configuration
-
-##### SerializationError
-- **Message**: "Serialization error: {details}"
-- **Description**: Failed to serialize or deserialize data
-- **Common Causes**: Data structure mismatch, corrupted JSON
-- **Solution**: Check data format and structure
-
-##### InternalError
-- **Message**: "Internal error: {details}"
-- **Description**: An unexpected internal error occurred
-- **Common Causes**: Programming error, unexpected state
-- **Solution**: Report to developers with error details
+Application-level short message constants (not `SaTokenError` variants) live in `sa_token_core::error::messages` (for example `INVALID_CREDENTIALS`).
 
 ---
 
-## Summary | 总结
+## Groups by domain
 
-This document provides comprehensive error documentation in Chinese and English for sa-token-rust. Each error includes:
-- Error message
-- Detailed description
-- Common causes
-- Solutions
+Groups below mirror `sa-token-core/src/error.rs`. Each row has a one-line typical trigger.
 
-For developers integrating sa-token-rust, this guide helps understand and handle errors effectively.
+### Token / login
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `TokenNotFound` | Token missing in storage, or already expired and removed |
+| `InvalidToken(String)` | Token format or content failed validation |
+| `TokenExpired` | Token explicitly judged expired |
+| `NotLogin` | Current request context is not logged in |
+| `TokenInactive` | Token exists but is inactive (frozen / not enabled) |
+| `TokenEmpty` | Empty token string passed in |
+| `TokenTooShort` | Token shorter than the configured minimum |
+| `LoginIdNotNumber` | login_id required to be numeric but failed to parse |
+| `SessionNotFound` | Session missing or already deleted |
+
+### Authorization (permission / role / terminal)
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `PermissionDenied` | Permission check failed (no specific code) |
+| `PermissionDeniedDetail(String)` | Missing a named permission |
+| `RoleDenied(String)` | Missing a named role |
+| `TerminalDenied { expected, actual }` | Device/terminal does not match the allowed pattern |
+
+### Account safety
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `AccountBanned(String)` | Account banned until the given time |
+| `AccountKickedOut` | Session forcibly kicked |
+| `AccountReplaced` | Login replaced on another device |
+| `NotSafe(String)` | Secondary auth not completed for a service |
+| `DisableService { service, level }` | Account disabled for a service at a level |
+| `SameTokenInvalid` | Same-Token header missing or mismatched |
+| `BasicAuthFailed { realm }` | HTTP Basic credentials missing or wrong |
+| `SignInvalid` | Request signature mismatch |
+| `SignTimestampExpired` | Signature timestamp missing or outside the window |
+| `TempTokenNotFound` | Temp token missing or already deleted |
+| `TempTokenExpired` | Temp token past `expire_at` |
+
+### Initialization
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `NotInitialized` | Global APIs used before `StpUtil::try_init_manager` (or equivalent) |
+| `AlreadyInitialized` | Global Manager initialized twice |
+
+### Storage / config / serialization / internal
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `StorageError(String)` | Underlying `SaStorage` operation failed |
+| `ConfigError(String)` | Invalid config (missing storage, bad JWT secret, …), often from `try_build` |
+| `SerializationError(String)` | Serialize/deserialize failure (also from `serde_json::Error`) |
+| `InternalError(String)` | Unexpected internal failure |
+
+### OAuth2
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `OAuth2ClientNotFound` | Client not registered |
+| `OAuth2InvalidCredentials` | Invalid client_id / secret |
+| `OAuth2ClientIdMismatch` | Token/code does not match client_id |
+| `OAuth2RedirectUriMismatch` | redirect_uri does not match registration |
+| `OAuth2CodeNotFound` | Authorization code missing or expired |
+| `OAuth2AccessTokenNotFound` | Access token missing or expired |
+| `OAuth2RefreshTokenNotFound` | OAuth2 refresh token missing or expired |
+| `OAuth2InvalidRefreshToken` | OAuth2 refresh token payload invalid |
+| `OAuth2InvalidScope` | Invalid scope data |
+| `OAuth2PkceRequired` | `code_verifier` required but missing |
+| `OAuth2PkceMismatch` | PKCE verification failed |
+| `OAuth2TokenRevokeFailed(String)` | Revoke failed |
+| `OAuth2UnsupportedGrant` | Unsupported grant_type |
+| `OAuth2PkceRequiredForPublicClient` | Public client did not use PKCE S256 |
+
+### SSO
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `InvalidTicket` | Ticket missing or invalid |
+| `TicketExpired` | Ticket expired |
+| `ServiceMismatch` | Service URL does not match registration |
+| `SsoSessionNotFound` | SSO session missing |
+| `SsoSignInvalid` | SSO request signature invalid |
+
+### Nonce / refresh (sa-token refresh tokens)
+
+| Variant | Typical trigger |
+|---------|-----------------|
+| `NonceAlreadyUsed` | Nonce already consumed (possible replay) |
+| `InvalidNonceFormat` | Invalid nonce format |
+| `InvalidNonceTimestamp` | Nonce timestamp invalid or expired |
+| `RefreshTokenNotFound` | Refresh token missing or expired |
+| `RefreshTokenInvalidData` | Refresh token payload invalid |
+| `RefreshTokenMissingLoginId` | Refresh token missing login_id |
+| `RefreshTokenInvalidExpireTime` | Invalid expire-time format in refresh token |
 
 ---
 
-**Version**: 0.1.14  
-**Last Updated**: 2026-05-07
+## Matching example
 
+```rust
+use sa_token_core::{SaTokenError, SaTokenResult};
+
+fn map_status(err: SaTokenError) -> u16 {
+    match err {
+        SaTokenError::NotLogin | SaTokenError::TokenNotFound | SaTokenError::TokenExpired => 401,
+        e if e.is_authz_error() => 403,
+        SaTokenError::NotInitialized | SaTokenError::ConfigError(_) => 500,
+        _ => 400,
+    }
+}
+```
+
+## Related
+
+- [Quick start](/guide/quick-start.md)
+- [Security features](/guide/security-features.md)
+- [OAuth2](/guide/oauth2.md)
+- [SSO](/guide/sso.md)

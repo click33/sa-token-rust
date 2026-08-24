@@ -4,29 +4,29 @@
 // Warp 框架集成 | Warp Framework Integration
 //
 //! # sa-token-plugin-warp
-//! 
+//!
 //! Warp框架集成插件 - 一站式认证授权解决方案
 //! Warp framework integration plugin - One-stop authentication and authorization solution
-//! 
+//!
 //! ## 快速开始 | Quick Start
-//! 
+//!
 //! 只需要导入这一个包，即可使用所有功能：
 //! Just import this package to use all features:
-//! 
+//!
 //! ```toml
 //! [dependencies]
 //! sa-token-plugin-warp = "0.1.8"  # 默认使用内存存储 | Default using memory storage
 //! # 或者使用 Redis 存储 | Or use Redis storage
 //! sa-token-plugin-warp = { version = "0.1.8", features = ["redis"] }
 //! ```
-//! 
+//!
 //! ## 使用示例 | Usage Example
-//! 
+//!
 //! ```rust,ignore
 //! use warp::Filter;
 //! use std::sync::Arc;
 //! use sa_token_plugin_warp::*;  // 一次性导入所有功能 | Import all features at once
-//! 
+//!
 //! #[tokio::main]
 //! async fn main() {
 //!     // 1. 初始化（使用内存存储） | Initialize (using memory storage)
@@ -66,31 +66,43 @@
 //! }
 //! ```
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(not(feature = "warp-03"))]
 compile_error!("sa-token-plugin-warp: enable feature `warp-03` (default).");
 
 pub mod adapter;
 pub mod extractor;
+pub mod filter;
 pub mod layer;
 pub mod middleware;
-pub mod state;
-pub mod filter;
+pub mod snapshot;
 
 // ============================================================================
 // Warp 框架集成（本插件特有） | Warp framework integration (plugin specific)
 // ============================================================================
-pub use filter::{sa_token_filter, sa_check_login_filter};
-pub use layer::{
-    extract_token_from_request, sa_check_login, sa_check_permission, sa_check_role, sa_token_cleanup,
-    sa_token_layer, with_sa_token_scope,
-};
-pub use middleware::{with_auth, with_permission, with_role, require_auth, require_permission, require_role};
-pub use extractor::{SaTokenExtractor, OptionalSaTokenExtractor, LoginIdExtractor, AuthError, PermissionError, RoleError, handle_rejection};
 pub use adapter::{WarpRequestAdapter, WarpResponseAdapter};
-pub use state::{SaTokenState, SaTokenStateBuilder};
+pub use extractor::{
+    AuthError, LoginIdExtractor, OptionalSaTokenExtractor, PermissionError, RoleError,
+    SaTokenExtractor, handle_rejection,
+};
+pub use filter::{
+    TokenData, extract_login_id, extract_optional_token_value, extract_token_value,
+    sa_check_login_filter, sa_token_filter,
+};
+pub use layer::{
+    SaTokenRejection, extract_token_from_request, handle_sa_rejection, sa_check_login,
+    sa_check_permission, sa_check_role, sa_token_cleanup, sa_token_layer, with_sa_token_scope,
+};
+pub use middleware::{
+    require_auth, require_permission, require_role, with_auth, with_permission, with_role,
+};
+pub use sa_token_plugin_common as common;
+pub use sa_token_plugin_common::{SaTokenState, SaTokenStateBuilder};
+pub use snapshot::WarpRequestSnapshot;
 
+pub use sa_token_adapter::{self, plugin::SaTokenPlugin, storage::SaStorage};
 pub use sa_token_core::{self, prelude::*};
-pub use sa_token_adapter::{self, storage::SaStorage, framework::FrameworkAdapter};
 pub use sa_token_macro::*;
 
 // ============================================================================

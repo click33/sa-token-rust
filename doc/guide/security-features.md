@@ -1,138 +1,134 @@
-# Security Features
+# Security features
 
-[中文文档](/zh/guide/security-features.md) | English
+English | [中文](/zh/guide/security-features.md)
 
-sa-token-rust provides built-in security mechanisms to protect against common attack vectors.
+Nonce, Refresh, secondary auth (Safe), Disable, Same-Token, request Sign, TempToken, HTTP Basic, and matching proc macros.
 
-## Nonce (Replay Attack Prevention)
+## Nonce (anti-replay)
 
-A nonce is a one-time-use random value that prevents replay attacks. Each nonce can only be validated and consumed once.
+Enable in config, then bind a one-shot nonce at login:
+
+```rust
+SaTokenConfig::builder()
+    .enable_nonce(true)
+    .nonce_timeout(60)
+    // ...
+```
 
 ```rust
 use sa_token_core::NonceManager;
 
-let nonce_manager = NonceManager::new(storage, 300); // 5 minutes TTL
+let nonce_mgr = NonceManager::from_dao(manager.dao().clone(), 60);
+let nonce = nonce_mgr.generate();
+nonce_mgr.store(&nonce, "user_1").await?;
+nonce_mgr.validate_and_consume(&nonce, "user_1").await?;
 
-// Generate nonce
-let nonce = nonce_manager.generate();
-
-// Validate and consume (one-time use)
-nonce_manager.validate_and_consume(&nonce, "user_123").await?;
-
-// Second use will fail (replay attack detected)
-match nonce_manager.validate_and_consume(&nonce, "user_123").await {
-    Err(_) => println!("Replay attack prevented!"),
-    _ => {}
-}
+// or pass at login
+StpUtil::builder("user_1").nonce(nonce).login(None::<String>).await?;
 ```
 
-### How It Works
+## Refresh token
 
-1. The server generates a unique nonce value and sends it to the client
-2. The client includes the nonce in its request
-3. The server validates the nonce and marks it as "consumed"
-4. Any subsequent request with the same nonce is rejected
-
-This ensures that even if an attacker captures a valid request, they cannot replay it because the nonce has already been used.
-
-### Configuration
-
-- **TTL (Time To Live)**: Controls how long a nonce remains valid before it expires. Default: 300 seconds (5 minutes).
-- **Storage**: Nonces are stored in the configured storage backend (memory, Redis, or database).
-
----
-
-## Automatic Token Renewal (auto_renew)
-
-When enabled, tokens are automatically renewed on every access. Configure via `SaTokenConfig`:
+When enabled, the login pipeline can issue a refresh token. On refresh, sa-token **atomically updates** the token body, reverse mapping, `login:token`, and multi-device index, then deletes the old access token.
 
 ```rust
-let config = SaTokenConfig::builder()
-    .auto_renew(true)           // Enable auto-renewal
-    .active_timeout(1800)       // Renew by this amount (if > 0)
-    .timeout(86400)             // Or fall back to this
-    .build_config();
-
-// Token auto-renewal happens on:
-// - get_token_info() calls
-// - Middleware token validation
-// - Parameterless StpUtil methods
+SaTokenConfig::builder()
+    .enable_refresh_token(true)
+    .refresh_token_timeout(2_592_000)
+    // ...
 ```
-
-**Behavior**: If `active_timeout > 0`, the token is renewed by `active_timeout` seconds on each access. Otherwise, it uses `timeout` as the renewal duration.
-
----
-
-## Refresh Token
-
-Refresh tokens allow clients to obtain new access tokens without requiring the user to re-authenticate.
 
 ```rust
 use sa_token_core::RefreshTokenManager;
 
-let refresh_manager = RefreshTokenManager::new(storage, config);
-
-// Generate refresh token
-let refresh_token = refresh_manager.generate("user_123");
-refresh_manager.store(&refresh_token, &access_token, "user_123").await?;
-
-// Refresh access token when expired
-let (new_access_token, user_id) = refresh_manager
-    .refresh_access_token(&refresh_token)
-    .await?;
+let refresh = RefreshTokenManager::from_dao(manager.dao().clone());
+// or from_storage(storage, config); refresh string usually comes from login
+let (new_access, login_id) = refresh.refresh_access_token(&refresh_token).await?;
 ```
 
-### Token Lifecycle
+Also: `revoke_all_for_user(login_type, login_id)`.
 
-```
-User Login
-    │
-    ├──► Access Token (short-lived, e.g., 2 hours)
-    │
-    └──► Refresh Token (long-lived, e.g., 30 days)
-              │
-              │  Access token expires
-              │
-              └──► Use Refresh Token to get new Access Token
-                        │
-                        │  Refresh token expires or revoked
-                        │
-                        └──► User must re-authenticate
+## Safe (secondary auth)
+
+Open a short safe window before sensitive actions:
+
+```rust
+StpUtil::open_safe("transfer", 300).await?; // seconds; current request token
+StpUtil::check_safe("transfer").await?;
 ```
 
-### Security Considerations
+Macro: `#[sa_check_safe("transfer")]`.
 
-- **Access tokens** should be short-lived (minutes to hours)
-- **Refresh tokens** should be long-lived but revocable (days to weeks)
-- Always store refresh tokens securely
-- Rotate refresh tokens on each use for enhanced security
-- Implement refresh token rotation to detect token theft
+## Disable
 
----
-
-## Best Practices
-
-### Token Security
-
-1. **Use HTTPS**: Always use TLS in production to protect tokens in transit
-2. **Set appropriate timeouts**: Balance security and user experience
-3. **Rotate secrets**: Regularly rotate JWT signing keys and other secrets
-4. **Validate all inputs**: Never trust client-provided tokens without validation
-
-### Storage Security
-
-1. **Redis**: Use password authentication and TLS for Redis connections in production
-2. **Memory**: Only use memory storage for development and testing
-3. **Database**: Implement proper indexing and cleanup for expired tokens
-
-### Defense in Depth
-
-- Combine multiple security features: Nonce + Refresh Token + Permission checking
-- Use event listeners to log security-relevant events (login, logout, kick-out)
-- Monitor for suspicious patterns (rapid login failures, token reuse attempts)
-
-## Run Security Examples
-
-```bash
-cargo run --example security_features_example
+```rust
+StpUtil::disable("user_1", 86400).await?;           // default service
+StpUtil::disable_level("user_1", "comment", 2, 3600).await?;
+StpUtil::check_disable("user_1").await?;
+StpUtil::untie_disable("user_1", "").await?;
 ```
+
+Macro: `#[sa_check_disable]` (optional service / level — see macro docs).
+
+## Same-Token
+
+Shared secret for cluster / gateway-to-service calls. Default header `SA-SAME-TOKEN`. Current and previous values (grace) are both accepted.
+
+```rust
+let t = StpUtil::get_same_token().await?;
+StpUtil::check_same_token(&t).await?;
+let t2 = StpUtil::refresh_same_token().await?;
+```
+
+Macro: `#[sa_check_same_token]` (reads the request header and checks).
+
+## Sign
+
+With `sign_secret_key` (and optional `sign_window_secs`):
+
+```rust
+use std::collections::BTreeMap;
+
+let mut params = BTreeMap::new();
+params.insert("userId".into(), "42".into());
+let signed = StpUtil::sign_params(params).await?; // timestamp / nonce / sign
+StpUtil::check_sign(&signed).await?;
+```
+
+Lower-level type: `RequestSign` (optional `with_dao` for nonce dedup).
+
+## TempToken
+
+Short-lived business tokens (default namespace):
+
+```rust
+let t = StpUtil::create_temp_token("reset:user_1", 300).await?;
+let record = StpUtil::parse_temp_token(&t).await?;
+StpUtil::delete_temp_token(&t).await?;
+```
+
+Or `TempTokenManager::new(dao)` with an explicit namespace.
+
+## HTTP Basic
+
+```rust
+use sa_token_core::http_basic;
+
+http_basic::check("sa-token", "admin:secret")?; // Authorization: Basic ...
+```
+
+Macros:
+
+```rust
+#[sa_check_http_basic("admin:secret")]
+async fn admin_only() { /* ... */ }
+
+#[sa_check_http_basic(account = "admin:secret", realm = "sa-token")]
+async fn with_realm() { /* ... */ }
+```
+
+## Related
+
+- [JWT](/guide/jwt.md)
+- [StpUtil](/guide/stp-util.md)
+- [Error reference](/reference/error-reference.md)

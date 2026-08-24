@@ -1,0 +1,53 @@
+# cargo-deny 审计基线 — 执行 `cargo deny check`
+# P0 只建配置，不引入 GitHub workflow（总纲禁止新增 .github）
+
+# graph 段：限定审计的目标平台与 feature，避免把非目标平台依赖算进来
+[graph]
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+# 审计 dev-dependencies（examples 用），但不递归到 dev 的 dev
+all-features = false
+
+# output 段：控制告警展示深度，便于定位传递依赖来源
+[output]
+feature-depth = 1
+
+[advisories]
+version = 2
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# 与 workspace MIT OR Apache-2.0 及常见传递依赖兼容
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# 多版本传递依赖先 warn：本仓库同时绑定 10 个 Web 框架，
+# http / hyper / tower 等出现多版本属预期，P13 再评估收紧
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+# tide 依赖 async-std，与 tokio 并存属已知设计（tide 插件独立 feature）
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

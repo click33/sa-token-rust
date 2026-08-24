@@ -3,7 +3,8 @@
 use gotham::handler::HandlerFuture;
 use gotham::middleware::Middleware;
 use gotham::state::State;
-use sa_token_plugin_gotham_core::{run_auth_flow, SaTokenState};
+use sa_token_core::router::run_auth_flow;
+use sa_token_plugin_common::SaTokenState;
 use std::pin::Pin;
 
 use crate::adapter::GothamCapturedRequest;

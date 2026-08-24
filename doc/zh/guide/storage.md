@@ -1,257 +1,142 @@
 # 存储后端
 
-中文文档 | [English](/guide/storage)
+[English](/guide/storage.md) | 中文
 
-sa-token-rust 通过 `SaStorage` trait 支持 4 种存储后端。本页介绍每种后端、其配置以及如何实现自定义后端。
+Token、Session、权限缓存等都落在 `SaStorage` 上。0.2 官方提供 Memory / Redis / Database（PostgreSQL）三种实现；业务层应通过 `SaTokenDao` 访问，而不是在服务里直接握底层存储。
 
-## SaStorage Trait
+## 插件 Feature
 
-所有存储后端实现 `sa-token-adapter` 中的 `SaStorage` trait：
+在框架插件（如 `sa-token-plugin-axum`）上启用对应 feature 后，可直接 `use` 重导出的存储类型：
 
-```rust
-use sa_token_adapter::storage::{SaStorage, StorageResult, StorageError};
+| Feature | Crate | 说明 |
+|---------|-------|------|
+| `memory`（默认） | `sa-token-storage-memory` | 进程内存储 |
+| `redis` | `sa-token-storage-redis` | Redis |
+| `database` | `sa-token-storage-database` | 关系库 KV（默认 `postgres`） |
+| `full` | 上述全部 | 一并启用 |
 
-#[async_trait]
-pub trait SaStorage: Send + Sync {
-    // 必须实现的方法
-    async fn get(&self, key: &str) -> StorageResult<Option<String>>;
-    async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> StorageResult<()>;
-    async fn delete(&self, key: &str) -> StorageResult<()>;
-    async fn exists(&self, key: &str) -> StorageResult<bool>;
-    async fn expire(&self, key: &str, ttl: Duration) -> StorageResult<()>;
-    async fn ttl(&self, key: &str) -> StorageResult<Option<Duration>>;
-    async fn clear(&self) -> StorageResult<()>;
-
-    // 带默认实现的方法
-    async fn mget(&self, keys: &[&str]) -> StorageResult<Vec<Option<String>>>;
-    async fn mset(&self, items: &[(&str, &str)], ttl: Option<Duration>) -> StorageResult<()>;
-    async fn mdel(&self, keys: &[&str]) -> StorageResult<()>;
-    async fn incr(&self, key: &str) -> StorageResult<i64>;
-    async fn decr(&self, key: &str) -> StorageResult<i64>;
-    async fn keys(&self, pattern: &str) -> StorageResult<Vec<String>>;
-}
+```toml
+sa-token-plugin-axum = { version = "0.2.0", features = ["redis"] }
+# 或单独依赖
+# sa-token-storage-redis = "0.2.0"
 ```
 
-### 方法说明
+## 注入 Builder
 
-| 方法 | 说明 |
-|---|---|
-| `get` | 获取值。键不存在或已过期返回 `None`。 |
-| `set` | 存储值，可选 TTL。`None` 表示永不过期。 |
-| `delete` | 删除键。 |
-| `exists` | 检查键是否存在且未过期。 |
-| `expire` | 设置或延长已有键的 TTL。 |
-| `ttl` | 获取剩余有效期。`None` 表示无过期时间。 |
-| `clear` | 删除所有键，谨慎使用。 |
-| `mget` / `mset` / `mdel` | 批量操作。默认循环单键操作。可覆盖以实现原子性。 |
-| `incr` / `decr` | 原子增减。默认：读取→解析→写入。 |
-| `keys` | 获取匹配模式的所有键（支持 `*` 通配）。默认：空列表。 |
-
-### StorageError
+所有后端都要包成 `Arc<dyn SaStorage>`（或具体类型的 `Arc`，会自动协变）再交给 Builder：
 
 ```rust
-pub enum StorageError {
-    OperationFailed(String),
-    KeyNotFound(String),
-    SerializationError(String),
-    ConnectionError(String),
-    InternalError(String),
-}
+use std::sync::Arc;
+use sa_token_plugin_axum::*; // 或 MemoryStorage / RedisStorage / DatabaseStorage
+
+let state = SaTokenState::builder()
+    .storage(Arc::new(MemoryStorage::new()))
+    .timeout(86400)
+    .build();
 ```
+
+库代码更推荐 `SaTokenConfig::builder().storage(...).try_build()?`，再 `StpUtil::try_init_manager`。
+
+## SaTokenDao
+
+`SaTokenManager` 内部用 `SaTokenDao` 作为存储唯一收口：键名（`SaKeys`）、序列化、TTL 都在这一层完成。Repository / Service **不应**直接持有 `SaStorage`。应用侧几乎只需选后端并注入；自定义键或原子原语时再查阅 `SaTokenDao` API。
 
 ---
 
 ## MemoryStorage
 
-基于 `Arc<RwLock<HashMap>>` 的内存存储。适合**开发和测试**。
-
-```toml
-[dependencies]
-sa-token-storage-memory = "0.1.14"
-```
+适合开发、测试与单机无持久化场景。
 
 ```rust
 use sa_token_storage_memory::MemoryStorage;
 use std::sync::Arc;
 
 let storage = Arc::new(MemoryStorage::new());
-
-// 清理过期数据
+// 可选：主动清理过期条目
 storage.cleanup_expired().await;
 ```
 
-### `keys()` 实现
-
-内存存储将模式中的 `*` 替换为 `.*`，内部使用正则匹配。例如 `sa:token:*` 匹配所有以 `sa:token:` 开头的键。
-
-### 特点
-
-- ✅ 最快（无网络开销）
-- ✅ 无外部依赖
-- ✅ TTL 支持，`get` 时自动清理过期数据
-- ❌ 重启数据丢失
-- ❌ 不可跨进程/Pod 共享
-- ❌ `keys()` 使用正则，非 Redis 风格 glob
+特点：无外部依赖、读写快；进程重启后数据丢失，不能跨进程共享。
 
 ---
 
 ## RedisStorage
 
-生产级 Redis 存储，支持构建器模式配置。需要 `redis` crate。
-
-```toml
-[dependencies]
-sa-token-storage-redis = "0.1.14"
-```
-
-### 快速开始
+适合生产、多实例共享会话。常用构造：
 
 ```rust
-use sa_token_storage_redis::RedisStorage;
+use sa_token_storage_redis::{RedisStorage, RedisConfig};
 use std::sync::Arc;
 
-// 方式 1：URL 字符串
+// 1) URL + 键前缀
 let storage = RedisStorage::new(
     "redis://:password@localhost:6379/0",
-    "sa-token:",  // 键前缀
+    "sa-token:",
 ).await?;
 
-// 方式 2：配置结构体
-let config = RedisConfig {
-    host: "localhost".into(),
-    port: 6379,
-    password: Some("password".into()),
-    database: 0,
-    ..Default::default()
-};
-let storage = RedisStorage::from_config(config, "sa-token:").await?;
+// 2) 便捷：物理前缀为空（逻辑键由 SaKeys 提供）
+let storage = RedisStorage::connect("redis://localhost:6379/0").await?;
+
+// 3) 配置结构体
+let storage = RedisStorage::from_config(
+    RedisConfig {
+        host: "localhost".into(),
+        port: 6379,
+        password: Some("password".into()),
+        database: 0,
+        ..Default::default()
+    },
+    "sa-token:",
+).await?;
+
+let state = SaTokenState::builder()
+    .storage(Arc::new(storage))
+    .build();
 ```
 
-### 构建器模式
+也可用 `RedisStorage::builder().host(...).port(...).key_prefix(...).build().await?`。
 
-```rust
-use sa_token_storage_redis::RedisStorage;
-
-let storage = RedisStorage::builder()
-    .host("redis-cluster.example.com")
-    .port(6380)
-    .password("secure-password")
-    .database(1)
-    .key_prefix("sa-token:")
-    .build()
-    .await?;
-```
-
-### RedisConfig 字段
-
-| 字段 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `host` | `String` | `"localhost"` | Redis 主机地址 |
-| `port` | `u16` | `6379` | Redis 端口 |
-| `password` | `Option<String>` | `None` | 认证密码 |
-| `database` | `u8` | `0` | 数据库编号 (0-15) |
-| `pool_size` | `u32` | `10` | 连接池大小（预留） |
-
-### URL 格式
-
-```
-redis://:password@host:port/database
-redis://localhost:6379/0                          # 无密码
-redis://:mypass@localhost:6379/0                  # 有密码
-redis://:Aq23-hjPwFB3mBDNFp3W1@localhost:6379/0   # 复杂密码
-```
-
-### 注意事项
-
-- 所有 `SaStorage` trait 方法均使用原生 Redis 命令实现
-- `mset` 使用 Redis pipeline 实现原子批量操作
-- `clear()` 使用 `KEYS` 命令（大数据集建议使用 `SCAN`）
-- `keys()` 返回匹配模式且带前缀的键列表
+URL 示例：`redis://localhost:6379/0`、`redis://:mypass@localhost:6379/0`。
 
 ---
 
 ## DatabaseStorage
 
-占位桩 — **尚未实现**。所有 trait 方法返回 `StorageError::InternalError("Not implemented")`。
+基于 sqlx 的 PostgreSQL KV 存储。crate 默认 feature 为 `postgres`：
 
 ```toml
-[dependencies]
-sa-token-storage-database = "0.1.14"
+sa-token-storage-database = "0.2.0"
+# 等价于 features = ["postgres"]
 ```
 
 ```rust
 use sa_token_storage_database::DatabaseStorage;
+use std::sync::Arc;
 
-// 当前始终返回错误
-let storage = DatabaseStorage::new("postgres://localhost/db").await?;
-// → Err(StorageError::InternalError("Not implemented"))
-```
+let storage = DatabaseStorage::new("postgres://user:pass@localhost/db").await?;
+// 或 DatabaseStorage::from_pool(pool)
 
----
-
-## 自定义存储
-
-实现 `SaStorage` trait 来适配自己的后端：
-
-```rust
-use sa_token_adapter::storage::{SaStorage, StorageResult};
-use std::time::Duration;
-
-struct CustomStorage {
-    // 你的状态（连接池等）
-}
-
-#[async_trait]
-impl SaStorage for CustomStorage {
-    async fn get(&self, key: &str) -> StorageResult<Option<String>> {
-        Ok(None)
-    }
-
-    async fn set(&self, key: &str, value: &str, ttl: Option<Duration>) -> StorageResult<()> {
-        Ok(())
-    }
-
-    async fn delete(&self, key: &str) -> StorageResult<()> {
-        Ok(())
-    }
-
-    async fn exists(&self, key: &str) -> StorageResult<bool> {
-        Ok(false)
-    }
-
-    async fn expire(&self, key: &str, ttl: Duration) -> StorageResult<()> {
-        Ok(())
-    }
-
-    async fn ttl(&self, key: &str) -> StorageResult<Option<Duration>> {
-        Ok(None)
-    }
-
-    async fn clear(&self) -> StorageResult<()> {
-        Ok(())
-    }
-}
-```
-
-将自定义存储传入状态构建器：
-
-```rust
-let storage = Arc::new(CustomStorage::new());
 let state = SaTokenState::builder()
-    .storage(storage)
+    .storage(Arc::new(storage))
     .build();
 ```
 
-## 选择后端
+`new` 会建连并执行内嵌 DDL（幂等）。当前实现支持基本 KV（`get` / `set` / `delete` 等）；`get_del`、CAS、`list_*`、`scan` 等会返回 `StorageError::Unsupported`。需要完整原子/列表能力时用 Memory 或 Redis。
 
-| 后端 | 适用场景 |
-|---|---|
-| **MemoryStorage** | 开发、测试、单实例部署 |
-| **RedisStorage** | 生产环境、分布式服务、水平扩展 |
-| **DatabaseStorage** | 尚未可用（占位） |
-| **自定义** | 特殊需求（Memcached、DynamoDB 等） |
+---
+
+## 能力对照
+
+| 能力 | Memory | Redis | Database |
+|------|--------|-------|----------|
+| KV get/set/delete | 是 | 是 | 是 |
+| `get_del` / CAS / `set_if_absent` | 是 | 是 | 不支持 |
+| `list_*` / `scan` | 是 | 是 | 不支持 |
+
+自定义后端：在 `sa-token-adapter` 中实现 `SaStorage`，同样以 `Arc` 注入 Builder。
 
 ## 相关文档
 
-- [快速入门](/zh/guide/quick-start)
-- [框架集成](/zh/guide/framework-integration)
+- [快速入门](./quick-start.md)
+- [框架适配器](./adapter.md)
+- [框架集成](./framework-integration.md)

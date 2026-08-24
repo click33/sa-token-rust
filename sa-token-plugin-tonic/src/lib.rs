@@ -40,44 +40,37 @@
 //! let layer = SaTokenGrpcLayer::with_path_auth(state, path_config);
 //! ```
 
+#![allow(missing_docs, missing_debug_implementations)]
+
 #[cfg(not(feature = "tonic-012"))]
-compile_error!(
-    "sa-token-plugin-tonic: enable feature `tonic-012` (default)."
-);
+compile_error!("sa-token-plugin-tonic: enable feature `tonic-012` (default).");
 
 // 中文: 公开模块 | English: Public modules
-pub mod state;
 pub mod adapter;
-pub mod interceptor;
 pub mod error;
+pub mod interceptor;
 pub mod layer;
 
 // 中文: 公开类型导出 | English: Public type exports
-pub use state::{SaTokenState, SaTokenStateBuilder};
-pub use adapter::{TonicRequestAdapter, TonicResponseAdapter, TonicCapturedRequest};
+pub use adapter::{TonicCapturedRequest, TonicRequestAdapter, TonicResponseAdapter};
 pub use error::{
-    AuthError, GrpcTokenData, PermissionError, SaTokenBearerToken, SaTokenGrpcPath,
-    SaTokenLoginId,
+    AuthError, GrpcTokenData, PermissionError, SaTokenBearerToken, SaTokenGrpcPath, SaTokenLoginId,
 };
 pub use interceptor::{
-    GrpcServerInterceptor,
-    get_login_id_from_request,
-    get_bearer_token_from_request,
+    GrpcServerInterceptor, check_permission, check_permissions, check_role, check_roles,
+    create_request_adapter, get_bearer_token_from_request, get_login_id_from_request,
     validate_token_from_request,
-    create_request_adapter,
-    check_permission,
-    check_permissions,
-    check_role,
-    check_roles,
 };
 pub use layer::{SaTokenGrpcLayer, SaTokenGrpcMiddleware};
+pub use sa_token_plugin_common as common;
+pub use sa_token_plugin_common::{SaTokenState, SaTokenStateBuilder};
 
 // 中文: 重导出 core router（与 Axum/Salvo 一致）| English: Re-export core router
-pub use sa_token_core::router::{PathAuthConfig, run_auth_flow, AuthFlowResult};
+pub use sa_token_core::router::{AuthFlowResult, PathAuthConfig, run_auth_flow};
 
 // 中文: 重新导出核心依赖 | English: Re-export core dependencies
+pub use sa_token_adapter::{self, plugin::SaTokenPlugin, storage::SaStorage};
 pub use sa_token_core::{self, prelude::*};
-pub use sa_token_adapter::{self, storage::SaStorage, framework::FrameworkAdapter};
 pub use sa_token_macro::*;
 
 // 中文: 根据特性条件编译存储实现 | English: Storage implementations with feature gates

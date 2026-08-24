@@ -1,380 +1,144 @@
-# OAuth2 Authorization Code Flow Guide
+# OAuth2
 
-[中文](/zh/guide/oauth2.md) | English
+English | [中文](/zh/guide/oauth2.md)
 
----
+`OAuth2Manager` covers authorization-code, refresh, password, and client-credentials flows. State is persisted through `SaTokenDao`. You can share Dao / key prefix with an existing `SaTokenManager`.
 
-## Overview
+## When to use
 
-sa-token-rust implements the complete OAuth2 Authorization Code Grant flow, compliant with RFC 6749, supporting third-party application authorization, single sign-on, API access control, and more.
+- You run an authorization server that issues access / refresh tokens.
+- Public clients need PKCE.
+- Password grant: you implement `PasswordVerifier`; core never stores user passwords.
 
-## Table of Contents
-
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Core Components](#core-components)
-- [Authorization Flow](#authorization-flow)
-- [API Reference](#api-reference)
-- [Security Best Practices](#security-best-practices)
-
-## Features
-
-- ✅ OAuth2 RFC 6749 compliant
-- ✅ Authorization Code Grant flow
-- ✅ Client management (registration, verification)
-- ✅ Authorization code generation and validation
-- ✅ Access token management
-- ✅ Refresh token mechanism
-- ✅ Strict redirect URI validation
-- ✅ Scope permission control
-- ✅ Token revocation
-- ✅ Automatic expiration cleanup
-- ✅ Enhanced error handling with detailed validation steps
-- ✅ Comprehensive code documentation with security considerations
-- ✅ Atomic code consumption (one-time use enforcement)
-
-## Quick Start
-
-### 1. Create OAuth2 Manager
+## Create the manager
 
 ```rust
-use sa_token_core::OAuth2Manager;
-use std::sync::Arc;
+use sa_token_core::oauth2::OAuth2Manager;
+use sa_token_core::SaTokenManager;
 
-let storage = Arc::new(MemoryStorage::new());
-let oauth2 = OAuth2Manager::new(storage)
-    .with_ttl(
-        600,      // Authorization code 10 minutes
-        3600,     // Access token 1 hour
-        2592000   // Refresh token 30 days
-    );
+// Align Dao with an existing Manager (recommended)
+let oauth = OAuth2Manager::from_manager(&manager)
+    .with_ttl(600, 3600, 2_592_000) // code / access / refresh (seconds)
+    .with_require_pkce(false);
+
+// Or OAuth2Manager::from_dao(dao) / OAuth2Manager::new(storage)
 ```
 
-### 2. Register Client
+## Register a client
+
+Secrets are stored as Argon2 PHC. At registration you may set plaintext `client_secret` (in-memory only, not serialized) or a ready `client_secret_hash`.
 
 ```rust
-use sa_token_core::OAuth2Client;
+use sa_token_core::oauth2::OAuth2Client;
 
 let client = OAuth2Client {
-    client_id: "web_app_001".to_string(),
-    client_secret: "secret_abc123xyz".to_string(),
-    redirect_uris: vec![
-        "http://localhost:3000/callback".to_string(),
-    ],
+    client_id: "web-app".into(),
+    client_secret: "plain-secret-at-register".into(),
+    client_secret_hash: String::new(),
+    redirect_uris: vec!["https://app.example/callback".into()],
     grant_types: vec![
-        "authorization_code".to_string(),
-        "refresh_token".to_string(),
+        "authorization_code".into(),
+        "refresh_token".into(),
     ],
-    scope: vec![
-        "read".to_string(),
-        "write".to_string(),
-        "profile".to_string(),
-    ],
+    scope: vec!["openid".into(), "profile".into()],
+    public_client: false,
 };
-
-oauth2.register_client(&client).await?;
+oauth.register_client(&client).await?;
+// or register_client_with_secret(client_id, plain_secret, ...)
 ```
 
-### 3. Complete Authorization Flow
+Public clients: `public_client = true`, no secret; authorization-code **requires** PKCE.
+
+## Authorization code + PKCE
 
 ```rust
-// Step 1: Generate authorization code (after user consent)
-let auth_code = oauth2.generate_authorization_code(
-    "web_app_001".to_string(),
-    "user_123".to_string(),
-    "http://localhost:3000/callback".to_string(),
-    vec!["read".to_string(), "profile".to_string()],
-);
+use sa_token_core::oauth2::{PkceChallenge, TokenIssueRequest};
 
-oauth2.store_authorization_code(&auth_code).await?;
+let pkce = PkceChallenge::from_verifier_s256(&code_verifier)?;
+let code = oauth
+    .issue_authorization_code(
+        "web-app".into(),
+        "user_42".into(),
+        "https://app.example/callback".into(),
+        vec!["openid".into()],
+        Some(pkce),
+        Some("state-xyz".into()),
+    )
+    .await?;
 
-// Step 2: Exchange code for token
-let token = oauth2.exchange_code_for_token(
-    &auth_code.code,
-    "web_app_001",
-    "secret_abc123xyz",
-    "http://localhost:3000/callback",
-).await?;
-
-// Step 3: Use access token
-let token_info = oauth2.verify_access_token(&token.access_token).await?;
-
-// Step 4: Refresh token
-let new_token = oauth2.refresh_access_token(
-    token.refresh_token.as_ref().unwrap(),
-    "web_app_001",
-    "secret_abc123xyz",
-).await?;
+let token = oauth
+    .issue_token(TokenIssueRequest {
+        grant_type: "authorization_code".into(),
+        client_id: "web-app".into(),
+        client_secret: "plain-secret-at-register".into(),
+        code: Some(code.code),
+        redirect_uri: Some("https://app.example/callback".into()),
+        code_verifier: Some(code_verifier),
+        ..Default::default()
+    })
+    .await?;
 ```
 
-## Core Components
+You can also call `exchange_code_for_token`, `refresh_access_token`, and `revoke_token`. `issue_token` dispatches by `grant_type`.
 
-### OAuth2Manager
+## Password grant
 
-OAuth2 manager responsible for the entire authorization flow.
+Implement `PasswordVerifier` and attach it:
 
 ```rust
-pub struct OAuth2Manager {
-    storage: Arc<dyn SaStorage>,
-    code_ttl: i64,
-    token_ttl: i64,
-    refresh_token_ttl: i64,
+use async_trait::async_trait;
+use sa_token_core::oauth2::PasswordVerifier;
+use sa_token_core::{SaTokenError, SaTokenResult};
+use std::sync::Arc;
+
+struct MyVerifier;
+
+#[async_trait]
+impl PasswordVerifier for MyVerifier {
+    async fn verify_password(&self, username: &str, password: &str) -> SaTokenResult<()> {
+        if username == "alice" && password == "correct" {
+            Ok(())
+        } else {
+            Err(SaTokenError::OAuth2InvalidCredentials)
+        }
+    }
 }
+
+let oauth = OAuth2Manager::from_manager(&manager)
+    .with_password_verifier(Arc::new(MyVerifier));
+
+let token = oauth
+    .issue_token(TokenIssueRequest {
+        grant_type: "password".into(),
+        client_id: "web-app".into(),
+        client_secret: "plain-secret-at-register".into(),
+        username: Some("alice".into()),
+        password: Some("correct".into()),
+        scope: vec!["profile".into()],
+        ..Default::default()
+    })
+    .await?;
 ```
 
-**Methods**:
-- `new(storage)` - Create manager
-- `with_ttl(code_ttl, token_ttl, refresh_ttl)` - Set expiration times
-- `register_client(&client)` - Register client
-- `get_client(client_id)` - Get client information
-- `verify_client(client_id, client_secret)` - Verify client credentials
-- `generate_authorization_code(...)` - Generate authorization code
-- `store_authorization_code(&code)` - Store authorization code
-- `exchange_code_for_token(...)` - Exchange code for token
-- `verify_access_token(&token)` - Verify access token
-- `refresh_access_token(...)` - Refresh access token
-- `revoke_token(&token)` - Revoke token
+Also available: `client_credentials_grant` / `grant_type: "client_credentials"`.
 
-### OAuth2Client
-
-Client information.
+## Verify and revoke
 
 ```rust
-pub struct OAuth2Client {
-    pub client_id: String,
-    pub client_secret: String,
-    pub redirect_uris: Vec<String>,
-    pub grant_types: Vec<String>,
-    pub scope: Vec<String>,
-}
+let info = oauth.verify_access_token(&token.access_token).await?;
+oauth.revoke_token(&token.access_token).await?;
 ```
 
-### AuthorizationCode
+## Pitfalls
 
-Authorization code information.
+| Topic | Note |
+|-------|------|
+| Dao | Prefer `from_manager` / `from_dao` so keys stay aligned |
+| PKCE | Required for public clients; `with_require_pkce(true)` forces it for confidential clients too |
+| Secrets | Storage keeps hashes; use `verify_client` for checks |
 
-```rust
-pub struct AuthorizationCode {
-    pub code: String,
-    pub client_id: String,
-    pub user_id: String,
-    pub redirect_uri: String,
-    pub scope: Vec<String>,
-    pub created_at: DateTime<Utc>,
-    pub expires_at: DateTime<Utc>,
-}
-```
+## Related
 
-### AccessToken
-
-Access token response.
-
-```rust
-pub struct AccessToken {
-    pub access_token: String,
-    pub token_type: String,        // "Bearer"
-    pub expires_in: i64,
-    pub refresh_token: Option<String>,
-    pub scope: Vec<String>,
-}
-```
-
-## Authorization Flow
-
-### Complete Flow Diagram
-
-```
-┌─────────┐                               ┌─────────────┐
-│  User   │                               │   Client    │
-└────┬────┘                               └──────┬──────┘
-     │                                            │
-     │  1. Access third-party app                 │
-     │───────────────────────────────────────────▶│
-     │                                            │
-     │  2. Redirect to authorization page         │
-     │◀───────────────────────────────────────────│
-     │                                            │
-┌────▼────┐                               ┌──────┴──────┐
-│Auth     │                               │  Resource   │
-│Server   │                               │  Server     │
-└────┬────┘                               └──────┬──────┘
-     │                                            │
-     │  3. User grants permission                 │
-     │                                            │
-     │  4. Generate authorization code            │
-     │  oauth2.generate_authorization_code()      │
-     │                                            │
-     │  5. Redirect back with code                │
-     │───────────────────────────────────────────▶│
-     │                                            │
-     │  6. Exchange code for token                │
-     │  oauth2.exchange_code_for_token()          │
-     │◀───────────────────────────────────────────│
-     │                                            │
-     │  7. Return access & refresh tokens         │
-     │───────────────────────────────────────────▶│
-     │                                            │
-     │  8. Access resources with token            │
-     │                                            │───────▶
-     │                                            │
-     │  9. Return resources                       │
-     │                                            │◀───────
-     │                                            │
-     │  10. Refresh token when expired            │
-     │  oauth2.refresh_access_token()             │
-     │◀───────────────────────────────────────────│
-     │                                            │
-     │  11. Return new access token               │
-     │───────────────────────────────────────────▶│
-     │                                            │
-```
-
-## API Reference
-
-### Client Management
-
-#### register_client
-
-Register an OAuth2 client.
-
-```rust
-pub async fn register_client(&self, client: &OAuth2Client) -> SaTokenResult<()>
-```
-
-#### get_client
-
-Get client information.
-
-```rust
-pub async fn get_client(&self, client_id: &str) -> SaTokenResult<OAuth2Client>
-```
-
-#### verify_client
-
-Verify client credentials.
-
-```rust
-pub async fn verify_client(&self, client_id: &str, client_secret: &str) -> SaTokenResult<bool>
-```
-
-### Authorization Code Management
-
-#### generate_authorization_code
-
-Generate authorization code.
-
-```rust
-pub fn generate_authorization_code(
-    &self,
-    client_id: String,
-    user_id: String,
-    redirect_uri: String,
-    scope: Vec<String>,
-) -> AuthorizationCode
-```
-
-#### store_authorization_code
-
-Store authorization code.
-
-```rust
-pub async fn store_authorization_code(&self, auth_code: &AuthorizationCode) -> SaTokenResult<()>
-```
-
-#### exchange_code_for_token
-
-Exchange authorization code for access token.
-
-```rust
-pub async fn exchange_code_for_token(
-    &self,
-    code: &str,
-    client_id: &str,
-    client_secret: &str,
-    redirect_uri: &str,
-) -> SaTokenResult<AccessToken>
-```
-
-### Token Management
-
-#### verify_access_token
-
-Verify access token.
-
-```rust
-pub async fn verify_access_token(&self, access_token: &str) -> SaTokenResult<OAuth2TokenInfo>
-```
-
-#### refresh_access_token
-
-Refresh access token.
-
-```rust
-pub async fn refresh_access_token(
-    &self,
-    refresh_token: &str,
-    client_id: &str,
-    client_secret: &str,
-) -> SaTokenResult<AccessToken>
-```
-
-#### revoke_token
-
-Revoke token.
-
-```rust
-pub async fn revoke_token(&self, token: &str) -> SaTokenResult<()>
-```
-
-## Security Best Practices
-
-### 1. Client Credentials
-
-- ✅ Use strong keys for client_secret (at least 32 characters)
-- ✅ Rotate client keys regularly
-- ✅ Store credentials securely, never hardcode
-- ✅ Use HTTPS to transmit credentials
-
-### 2. Authorization Code
-
-- ✅ Code can only be used once (implemented)
-- ✅ Short validity period (default 10 minutes)
-- ✅ Strict redirect_uri validation (implemented)
-- ✅ Use state parameter to prevent CSRF
-
-### 3. Access Token
-
-- ✅ Short validity period (recommended 1-2 hours)
-- ✅ Use Bearer Token format
-- ✅ Validate signature and expiration
-- ✅ Implement token revocation (implemented)
-
-### 4. Transmission Security
-
-- ✅ **Must use HTTPS**
-- ✅ Enable HSTS
-- ✅ Use secure TLS versions (1.2+)
-- ✅ Verify SSL certificates
-
-## Examples
-
-Run the complete example:
-
-```bash
-cargo run --example oauth2_example
-```
-
-View example code: `examples/oauth2_example.rs`
-
-## References
-
-- [OAuth 2.0 RFC 6749](https://tools.ietf.org/html/rfc6749)
-- [OAuth 2.0 Security Best Practices](https://tools.ietf.org/html/draft-ietf-oauth-security-topics)
-- [Example Code](https://github.com/sa-tokens/sa-token-rust/blob/main/examples/oauth2_example.rs)
-
-## Next Steps
-
-- [JWT Guide](/guide/jwt.md)
-- [Event Listeners](/guide/event-listener.md)
-- [Permission Matching](/guide/permission-matching.md)
-
+- [SSO](/guide/sso.md)
+- [Security features](/guide/security-features.md)
+- [Error reference](/reference/error-reference.md)

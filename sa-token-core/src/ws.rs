@@ -3,12 +3,12 @@
 //! # Code Flow Logic | 代码流程逻辑
 //!
 //! ## English
-//! 
+//!
 //! ### Overview
 //! This module provides WebSocket authentication capabilities for sa-token-rust.
 //! It handles token extraction from various sources (headers, query parameters)
 //! and validates them against the token manager.
-//! 
+//!
 //! ### Authentication Flow
 //! ```text
 //! 1. WebSocket Connection Request
@@ -45,22 +45,22 @@
 //!    ↓
 //! 10. Return WsAuthInfo
 //! ```
-//! 
+//!
 //! ### Token Extraction Priority
 //! 1. Authorization Header: `Bearer {token}`
 //! 2. Sec-WebSocket-Protocol Header: `{token}`
 //! 3. Query Parameter: `?token={token}`
-//! 
+//!
 //! ### Extension Points
 //! - Custom WsTokenExtractor: Implement your own token extraction logic
 //! - WsAuthInfo.metadata: Store custom connection data
 //!
 //! ## 中文
-//! 
+//!
 //! ### 概述
 //! 本模块为 sa-token-rust 提供 WebSocket 认证功能。
 //! 它负责从多种来源（请求头、查询参数）提取 Token 并通过 Token 管理器进行验证。
-//! 
+//!
 //! ### 认证流程
 //! ```text
 //! 1. WebSocket 连接请求
@@ -97,20 +97,21 @@
 //!    ↓
 //! 10. 返回 WsAuthInfo
 //! ```
-//! 
+//!
 //! ### Token 提取优先级
 //! 1. Authorization 请求头: `Bearer {token}`
 //! 2. Sec-WebSocket-Protocol 请求头: `{token}`
 //! 3. 查询参数: `?token={token}`
-//! 
+//!
 //! ### 扩展点
 //! - 自定义 WsTokenExtractor: 实现自己的 Token 提取逻辑
 //! - WsAuthInfo.metadata: 存储自定义连接数据
 
 use crate::error::SaTokenError;
-use crate::manager::SaTokenManager;
-use crate::token::TokenValue;
 use crate::event::SaTokenEvent;
+use crate::manager::SaTokenManager;
+use crate::online::OnlineUser;
+use crate::token::TokenValue;
 use async_trait::async_trait;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -124,17 +125,17 @@ use std::sync::Arc;
 pub struct WsAuthInfo {
     /// User login ID | 用户登录 ID
     pub login_id: String,
-    
+
     /// Authentication token | 认证 Token
     pub token: String,
-    
+
     /// Unique WebSocket session ID | 唯一的 WebSocket 会话 ID
     /// Format: ws:{login_id}:{uuid}
     pub session_id: String,
-    
+
     /// Connection timestamp | 连接时间戳
     pub connect_time: chrono::DateTime<chrono::Utc>,
-    
+
     /// Custom metadata for this connection | 该连接的自定义元数据
     pub metadata: HashMap<String, String>,
 }
@@ -156,41 +157,31 @@ pub trait WsTokenExtractor: Send + Sync {
     /// # Returns | 返回值
     /// * `Some(token)` - Token found | 找到 Token
     /// * `None` - No token found | 未找到 Token
-    async fn extract_token(&self, headers: &HashMap<String, String>, query: &HashMap<String, String>) -> Option<String>;
+    async fn extract_token(
+        &self,
+        headers: &HashMap<String, String>,
+        query: &HashMap<String, String>,
+    ) -> Option<String>;
 }
 
-/// Default token extractor implementation
-/// 默认的 Token 提取器实现
-///
-/// Extracts tokens from:
-/// 从以下位置提取 Token:
-/// 1. Authorization header (Bearer token)
-/// 2. Sec-WebSocket-Protocol header
-/// 3. Query parameter "token"
+/// Default token extractor: returns `None` so [`WsAuthManager`] uses config-aware maps.
+/// 默认提取器返回 `None`，由 [`WsAuthManager`] 走尊重配置的 maps 读取。
 pub struct DefaultWsTokenExtractor;
 
 #[async_trait]
 impl WsTokenExtractor for DefaultWsTokenExtractor {
-    async fn extract_token(&self, headers: &HashMap<String, String>, query: &HashMap<String, String>) -> Option<String> {
-        // Priority 1: Authorization header with Bearer scheme
-        // 优先级 1: Authorization 请求头（Bearer 方式）
-        if let Some(token) = headers.get("Authorization") {
-            return Some(token.trim_start_matches("Bearer ").to_string());
-        }
-        
-        // Priority 2: WebSocket Protocol header
-        // 优先级 2: WebSocket Protocol 请求头
-        if let Some(token) = headers.get("Sec-WebSocket-Protocol") {
-            return Some(token.to_string());
-        }
-        
-        // Priority 3: Query parameter
-        // 优先级 3: 查询参数
-        if let Some(token) = query.get("token") {
-            return Some(token.to_string());
-        }
-        
+    async fn extract_token(
+        &self,
+        _headers: &HashMap<String, String>,
+        _query: &HashMap<String, String>,
+    ) -> Option<String> {
         None
+    }
+}
+
+impl std::fmt::Debug for DefaultWsTokenExtractor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DefaultWsTokenExtractor { .. }")
     }
 }
 
@@ -202,9 +193,15 @@ impl WsTokenExtractor for DefaultWsTokenExtractor {
 pub struct WsAuthManager {
     /// Reference to the token manager | Token 管理器引用
     manager: Arc<SaTokenManager>,
-    
+
     /// Token extractor implementation | Token 提取器实现
     extractor: Arc<dyn WsTokenExtractor>,
+}
+
+impl std::fmt::Debug for WsAuthManager {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WsAuthManager { .. }")
+    }
 }
 
 impl WsAuthManager {
@@ -237,11 +234,11 @@ impl WsAuthManager {
     /// let custom_extractor = Arc::new(MyCustomExtractor);
     /// let ws_auth = WsAuthManager::with_extractor(manager, custom_extractor);
     /// ```
-    pub fn with_extractor(manager: Arc<SaTokenManager>, extractor: Arc<dyn WsTokenExtractor>) -> Self {
-        Self {
-            manager,
-            extractor,
-        }
+    pub fn with_extractor(
+        manager: Arc<SaTokenManager>,
+        extractor: Arc<dyn WsTokenExtractor>,
+    ) -> Self {
+        Self { manager, extractor }
     }
 
     /// Authenticate a WebSocket connection
@@ -271,10 +268,10 @@ impl WsAuthManager {
     /// ```rust,ignore
     /// let mut headers = HashMap::new();
     /// headers.insert("Authorization".to_string(), "Bearer token123".to_string());
-    /// 
+    ///
     /// let auth_info = ws_auth.authenticate(&headers, &HashMap::new()).await?;
     /// println!("User {} connected", auth_info.login_id);
-    /// 
+    ///
     /// // Event listeners will be notified of WebSocket authentication
     /// // 事件监听器将收到 WebSocket 认证通知
     /// ```
@@ -283,30 +280,25 @@ impl WsAuthManager {
         headers: &HashMap<String, String>,
         query: &HashMap<String, String>,
     ) -> Result<WsAuthInfo, SaTokenError> {
-        // Step 1: Extract token from request
-        // 步骤 1: 从请求中提取 Token
-        let token_str = self.extractor.extract_token(headers, query).await
-            .ok_or(SaTokenError::NotLogin)?;
+        let token = match self.extractor.extract_token(headers, query).await {
+            Some(s) => crate::token_io::apply_token_prefix(
+                s.trim(),
+                self.manager.config.token_prefix.as_deref(),
+            ),
+            None => crate::token_io::read_token_from_maps(headers, query, &self.manager.config),
+        };
+        let token_str = token.ok_or(SaTokenError::NotLogin)?;
 
-        // Step 2: Convert to TokenValue and get token info
-        // 步骤 2: 转换为 TokenValue 并获取 Token 信息
         let token = TokenValue::new(token_str.clone());
         let token_info = self.manager.get_token_info(&token).await?;
-        
-        // Step 3: Validate token expiration
-        // 步骤 3: 验证 Token 过期时间
         if let Some(expire_time) = token_info.expire_time
-            && chrono::Utc::now() > expire_time {
-                return Err(SaTokenError::TokenExpired);
-            }
+            && chrono::Utc::now() > expire_time
+        {
+            return Err(SaTokenError::TokenExpired);
+        }
 
-        // Step 4: Generate unique WebSocket session ID
-        // 步骤 4: 生成唯一的 WebSocket 会话 ID
-        let login_id = token_info.login_id.clone();
+        let login_id = token_info.login_id.to_string();
         let session_id = format!("ws:{}:{}", login_id, uuid::Uuid::new_v4());
-
-        // Step 5: Create authentication info
-        // 步骤 5: 创建认证信息
         let auth_info = WsAuthInfo {
             login_id: login_id.clone(),
             token: token_str.clone(),
@@ -315,14 +307,25 @@ impl WsAuthManager {
             metadata: HashMap::new(),
         };
 
-        // Step 6: Publish WebSocket authentication event (Login event with websocket type)
-        // 步骤 6: 发布 WebSocket 认证事件（标记为 websocket 类型的 Login 事件）
-        let event = SaTokenEvent::login(login_id, &token_str)
-            .with_login_type("websocket");
-        self.manager.event_bus().publish(event).await;
+        // Presence is connection-scoped, not HTTP-login-scoped.
+        // presence 绑定长连接，而不是 HTTP 登录。
+        if let Some(online) = self.manager.online_manager() {
+            let user = OnlineUser {
+                login_type: token_info.login_type.to_string(),
+                login_id: login_id.clone(),
+                token: token_str.clone(),
+                device: token_info.device.clone().unwrap_or_else(|| "ws".into()),
+                connect_time: auth_info.connect_time,
+                last_activity: chrono::Utc::now(),
+                metadata: HashMap::new(),
+            };
+            if let Err(e) = online.mark_online(user).await {
+                tracing::warn!(error = %e, "failed to mark websocket presence");
+            }
+        }
 
-        // Step 7: Return authentication info
-        // 步骤 7: 返回认证信息
+        let event = SaTokenEvent::login(&login_id, &token_str).with_login_type("websocket");
+        self.manager.event_bus().publish(event).await;
         Ok(auth_info)
     }
 
@@ -342,16 +345,17 @@ impl WsAuthManager {
     /// println!("Token belongs to user: {}", login_id);
     /// ```
     pub async fn verify_token(&self, token: &str) -> Result<String, SaTokenError> {
-        let token_value = TokenValue::new(token.to_string());
+        let token_value = TokenValue::new(token);
         let token_info = self.manager.get_token_info(&token_value).await?;
-        
+
         // Validate expiration | 验证过期时间
         if let Some(expire_time) = token_info.expire_time
-            && chrono::Utc::now() > expire_time {
-                return Err(SaTokenError::TokenExpired);
-            }
+            && chrono::Utc::now() > expire_time
+        {
+            return Err(SaTokenError::TokenExpired);
+        }
 
-        Ok(token_info.login_id)
+        Ok(token_info.login_id.to_string())
     }
 
     /// Refresh a WebSocket session by verifying its token
@@ -368,8 +372,46 @@ impl WsAuthManager {
     /// ```rust,ignore
     /// ws_auth.refresh_ws_session(&auth_info).await?;
     /// ```
+    /// Verify token, renew if configured, refresh presence activity.
+    /// 校验 token；若开启自动续签则续期；并刷新 presence 活跃时间。
     pub async fn refresh_ws_session(&self, auth_info: &WsAuthInfo) -> Result<(), SaTokenError> {
-        self.verify_token(&auth_info.token).await?;
+        let token = TokenValue::new(auth_info.token.clone());
+        let info = self
+            .manager
+            .token_repo()
+            .load_token_info_no_renew(&token)
+            .await?;
+        if self.manager.token_repo().should_auto_renew(&info) {
+            self.manager
+                .token_repo()
+                .apply_auto_renew(auth_info.token.as_str(), info.clone())
+                .await?;
+        }
+        if let Some(online) = self.manager.online_manager() {
+            let _ = online
+                .update_activity_with_type(&info.login_type, &auth_info.login_id, &auth_info.token)
+                .await;
+        }
+        Ok(())
+    }
+
+    /// Drop presence when the socket closes.
+    /// 套接字关闭时去掉 presence。
+    pub async fn end_ws_session(&self, auth_info: &WsAuthInfo) -> Result<(), SaTokenError> {
+        if let Some(online) = self.manager.online_manager() {
+            let info = self
+                .manager
+                .get_token_info(&TokenValue::new(auth_info.token.clone()))
+                .await
+                .ok();
+            let login_type = info
+                .as_ref()
+                .map(|i| i.login_type.as_ref())
+                .unwrap_or(crate::keys::LOGIN_TYPE_DEFAULT);
+            online
+                .mark_offline_with_type(login_type, &auth_info.login_id, &auth_info.token)
+                .await?;
+        }
         Ok(())
     }
 }
@@ -385,15 +427,21 @@ mod tests {
         let config = SaTokenConfig::default();
         let storage = Arc::new(MemoryStorage::new());
         let manager = Arc::new(SaTokenManager::new(storage, config));
-        
+
         let ws_manager = WsAuthManager::new(manager.clone());
-        
+
         let token = manager.login("user123").await.unwrap();
-        
+
         let mut headers = HashMap::new();
-        headers.insert("Authorization".to_string(), format!("Bearer {}", token.as_str()));
-        
-        let auth_info = ws_manager.authenticate(&headers, &HashMap::new()).await.unwrap();
+        headers.insert(
+            "Authorization".to_string(),
+            format!("Bearer {}", token.as_str()),
+        );
+
+        let auth_info = ws_manager
+            .authenticate(&headers, &HashMap::new())
+            .await
+            .unwrap();
         assert_eq!(auth_info.login_id, "user123");
     }
 
@@ -402,15 +450,18 @@ mod tests {
         let config = SaTokenConfig::default();
         let storage = Arc::new(MemoryStorage::new());
         let manager = Arc::new(SaTokenManager::new(storage, config));
-        
+
         let ws_manager = WsAuthManager::new(manager.clone());
-        
+
         let token = manager.login("user456").await.unwrap();
-        
+
         let mut query = HashMap::new();
         query.insert("token".to_string(), token.as_str().to_string());
-        
-        let auth_info = ws_manager.authenticate(&HashMap::new(), &query).await.unwrap();
+
+        let auth_info = ws_manager
+            .authenticate(&HashMap::new(), &query)
+            .await
+            .unwrap();
         assert_eq!(auth_info.login_id, "user456");
     }
 
@@ -419,11 +470,11 @@ mod tests {
         let config = SaTokenConfig::default();
         let storage = Arc::new(MemoryStorage::new());
         let manager = Arc::new(SaTokenManager::new(storage, config));
-        
+
         let ws_manager = WsAuthManager::new(manager.clone());
-        
+
         let token = manager.login("user789").await.unwrap();
-        
+
         let login_id = ws_manager.verify_token(token.as_str()).await.unwrap();
         assert_eq!(login_id, "user789");
     }

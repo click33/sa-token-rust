@@ -1,255 +1,116 @@
-# 路径鉴权指南
+# 路径鉴权
 
 [English](/guide/path-auth.md) | 中文
 
----
+HTTP / gRPC 中间件通过 `PathAuthConfig` 决定「哪些路径必须登录」。公开接口请用 `exclude`，**不要**指望 `#[sa_ignore]`（它只跳过宏检查）。
 
-## 概述
+## 何时使用
 
-路径鉴权允许您配置哪些路由需要认证，哪些被排除，提供细粒度的访问控制，而无需修改单个路由处理器。
+- 整站默认鉴权，仅放行 `/login`、`/health` 等。
+- 与 `#[sa_check_*]` 分工：中间件管「有没有登录」，宏管「有没有权限 / 角色」。
 
-## 目录
-
-- [快速开始](#快速开始)
-- [配置](#配置)
-- [模式匹配](#模式匹配)
-- [示例](#示例)
-- [框架集成](#框架集成)
-
-## 快速开始
-
-**依赖（0.1.14）：** Actix-web 使用 **`sa-token-plugin-actix-web`**，默认 **`v4`** + **`memory`**（见 [快速入门](./quick-start.md)）。
-
-### 基本用法
+## PathAuthConfig
 
 ```rust
 use sa_token_core::router::PathAuthConfig;
-use sa_token_plugin_actix_web::{SaTokenMiddleware, SaTokenState, MemoryStorage};
-use std::sync::Arc;
+
+let config = PathAuthConfig::new()
+    .include(vec!["/**".into()])           // 需要鉴权的路径（Ant 风格）
+    .exclude(vec![
+        "/api/login".into(),
+        "/health".into(),
+        "/public/**".into(),
+    ])
+    .validator(|login_id| {                 // 可选：额外校验 login_id
+        !login_id.is_empty()
+    });
+```
+
+规则：`need_auth = 匹配 include 且不匹配 exclude`。
+
+| 模式 | 含义 |
+|------|------|
+| `/**` | 全部路径 |
+| `/api/**` | 以 `/api` 为前缀 |
+| `/api/*` | `/api` 下仅一层（`/api/user` 命中，`/api/a/b` 不命中） |
+| `*.html` | 以 `.html` 结尾 |
+| `/exact` | 精确匹配 |
+
+## run_auth_flow
+
+各框架 Layer / Middleware 内部调用同一流水线：
+
+```text
+extract_token_from(req, config)
+  → process_auth(path, token, PathAuthConfig?, manager)
+  → create_context → AuthFlowResult
+```
+
+```rust
+use sa_token_core::router::run_auth_flow;
+
+// path_config = Some(...)：按 include/exclude 决定是否 401
+// path_config = None：有 token 则校验并填上下文，不按路径拒绝
+let flow = run_auth_flow(&adapter, &manager, Some(&config)).await;
+if flow.should_reject() {
+    // 绑定层返回 401
+}
+```
+
+`AuthFlowResult::run(fut)` 会在 `SaTokenContext::scope` 中执行后续 handler，供 `StpUtil` 无参 API 使用。
+
+## Layer：`with_path_auth` vs 宏
+
+**Axum 示例：**
+
+```rust
+use sa_token_plugin_axum::{SaTokenLayer, SaTokenState};
+use sa_token_core::PathAuthConfig;
 
 let state = SaTokenState::builder()
-    .storage(Arc::new(MemoryStorage::new()))
+    .storage(storage)
     .build();
 
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string(), "/api/health".to_string()]);
+let path = PathAuthConfig::new()
+    .include(vec!["/**".into()])
+    .exclude(vec!["/api/login".into()]);
 
-App::new()
-    .wrap(SaTokenMiddleware::with_path_auth(state, config))
+let app = axum::Router::new()
+    .route("/api/login", /* ... */)
+    .route("/api/user", /* ... */)
+    .layer(SaTokenLayer::with_path_auth(state.clone(), path));
 ```
 
-## 配置
-
-### PathAuthConfig
-
-`PathAuthConfig` 结构体提供了构建器模式来配置路径鉴权：
+**Actix 示例：**
 
 ```rust
-let config = PathAuthConfig::new()
-    .include(vec![
-        "/api/**".to_string(),
-        "/admin/**".to_string(),
-    ])
-    .exclude(vec![
-        "/api/public/**".to_string(),
-        "/api/login".to_string(),
-    ])
-    .validator(|login_id| {
-        // 自定义验证逻辑
-        login_id.starts_with("user_")
-    });
+use sa_token_plugin_actix_web::{PathAuthConfig, SaTokenMiddleware};
+
+App::new().wrap(SaTokenMiddleware::with_path_auth(
+    state.clone(),
+    PathAuthConfig::new()
+        .include(vec!["/**".into()])
+        .exclude(vec!["/api/login".into()]),
+))
 ```
 
-### 方法
+| 机制 | 作用 | 不做什么 |
+|------|------|----------|
+| `SaTokenLayer::with_path_auth` / `SaTokenMiddleware::with_path_auth` | 路径级登录门禁；写上下文 | 不检查权限字符串 |
+| `#[sa_check_login]` / `#[sa_check_permission]` | 处理器内细粒度检查 | **不**放行中间件 |
+| `#[sa_ignore]` | 本函数不插入宏检查 | **不**跳过 Layer |
 
-- `include(patterns)`: 设置需要鉴权的路径
-- `exclude(patterns)`: 设置排除鉴权的路径
-- `validator(fn)`: 设置自定义登录ID验证函数
+仅构造 `SaTokenLayer::new(state)`（无 path config）时：有 token 则填充上下文，匿名请求默认放行——适合「路由自己用宏保护」的模式。
 
-## 模式匹配
+## 陷阱
 
-### 支持的模式
+1. 忘记 `exclude` 登录接口 → 客户端永远 401。
+2. 只加 `#[sa_ignore]` 却未 `exclude` → 中间件仍拒绝。
+3. `include` 为空 → 任何路径都不会 `need_auth`（等于关掉路径强制登录）。
 
-| 模式 | 说明 | 示例 |
-|------|------|------|
-| `/**` | 匹配所有路径 | 匹配所有 |
-| `/api/**` | 多级前缀匹配 | 匹配 `/api/user`、`/api/user/profile` |
-| `/api/*` | 单级前缀匹配 | 匹配 `/api/user`，不匹配 `/api/user/profile` |
-| `*.html` | 后缀匹配 | 匹配 `/page.html` |
-| `/exact` | 精确匹配 | 仅匹配 `/exact` |
+## 相关链接
 
-### 匹配规则
-
-1. 首先检查包含模式 - 如果路径匹配，则需要鉴权
-2. 排除模式覆盖包含模式 - 如果路径匹配排除模式，则不需要鉴权
-3. 如果未设置包含模式，则没有路径需要鉴权
-4. 如果路径既不匹配包含也不匹配排除，则不需要鉴权
-
-## 示例
-
-### 示例 1: 保护 API 路由
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-// /api/user -> 需要鉴权
-// /api/public/info -> 不需要鉴权
-// /web/page -> 不需要鉴权
-```
-
-### 示例 2: 多个包含模式
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec![
-        "/api/**".to_string(),
-        "/admin/**".to_string(),
-    ])
-    .exclude(vec![
-        "/api/login".to_string(),
-        "/api/register".to_string(),
-    ]);
-```
-
-### 示例 3: 自定义验证器
-
-```rust
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .validator(|login_id| {
-        // 只允许以 "user_" 开头的登录ID
-        login_id.starts_with("user_")
-    });
-```
-
-## 框架集成
-
-下文含 Actix-web、Axum、Poem、Salvo、Ntex、Tide 的 **`with_path_auth`** 示例。**Rocket / Gotham / Warp** 以全局层为主，路径规则请在处理器或宏中组合 **`PathAuthConfig`**（完整说明见 [文档](https://github.com/sa-tokens/sa-token-rust/blob/main/docs/PATH_AUTH_GUIDE_zh-CN.md)）。
-
-### Actix-web
-
-```rust
-use sa_token_plugin_actix_web::{SaTokenMiddleware, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-App::new()
-    .wrap(SaTokenMiddleware::with_path_auth(state, config))
-```
-
-### Axum
-
-```rust
-use sa_token_plugin_axum::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Router::new()
-    .layer(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Poem
-
-```rust
-use sa_token_plugin_poem::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Route::new()
-    .with(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Salvo
-
-```rust
-use sa_token_plugin_salvo::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-Router::new()
-    .hoop(SaTokenLayer::with_path_auth(state, config))
-```
-
-### Ntex
-
-```rust
-use sa_token_plugin_ntex::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-App::new()
-    .wrap(SaTokenLayer::with_path_auth(state, config))
-    // ...路由
-```
-
-### Tide
-
-```rust
-use sa_token_plugin_tide::{SaTokenLayer, PathAuthConfig};
-
-let config = PathAuthConfig::new()
-    .include(vec!["/api/**".to_string()])
-    .exclude(vec!["/api/public/**".to_string()]);
-
-app.with(SaTokenLayer::with_path_auth(state, config))
-```
-
-## 最佳实践
-
-1. **使用特定模式**: 尽可能使用 `/api/user/*` 而不是 `/api/**`
-2. **排除公共路由**: 始终排除登录、注册和公共 API 路由
-3. **测试模式**: 验证您的模式是否匹配预期路径
-4. **使用验证器**: 添加自定义验证以增强安全性
-5. **记录模式**: 保留受保护和公共路由的列表
-
-## API 参考
-
-### PathAuthConfig
-
-```rust
-impl PathAuthConfig {
-    pub fn new() -> Self;
-    pub fn include(self, patterns: Vec<String>) -> Self;
-    pub fn exclude(self, patterns: Vec<String>) -> Self;
-    pub fn validator<F>(self, f: F) -> Self
-    where
-        F: Fn(&str) -> bool + Send + Sync + 'static;
-    pub fn check(&self, path: &str) -> bool;
-    pub fn validate_login_id(&self, login_id: &str) -> bool;
-}
-```
-
-### 辅助函数
-
-```rust
-pub fn match_path(path: &str, pattern: &str) -> bool;
-pub fn match_any(path: &str, patterns: &[&str]) -> bool;
-pub fn need_auth(path: &str, include: &[&str], exclude: &[&str]) -> bool;
-pub fn extract_token<R: SaRequest>(req: &R, token_name: &str) -> Option<String>;
-pub async fn run_auth_flow<R: SaRequest>(req: &R, manager: &SaTokenManager, config: Option<&PathAuthConfig>) -> AuthFlowResult;
-```
-
-### AuthFlowResult
-
-```rust
-impl AuthFlowResult {
-    // 若路径需要鉴权但 token 缺失或无效，返回 true（绑定层应返回 401）
-    pub fn should_reject(&self) -> bool;
-    // 使用本流的 SaTokenContext 执行 future（跨 await 安全）
-    pub async fn run<F, R>(self, fut: F) -> R;
-}
-```
-
+- 仓库示例：`cargo run --example path_auth_example`（[`examples/path_auth_example.rs`](https://github.com/sa-tokens/sa-token-rust/blob/main/examples/path_auth_example.rs)）
+- [StpUtil](./stp-util.md)
+- [权限匹配与宏](./permission-matching.md)
+- [框架集成](./framework-integration.md)
