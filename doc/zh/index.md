@@ -41,7 +41,7 @@ sa-token-rust/
 
 微信交流群：
 
-![sa-token-rust 微信群](https://sa-token.cc/big-file/contact/sa-token-rust--wx-group-qr.png?v=5)
+![sa-token-rust 微信群](https://res.dev33.cn/contact/sa-token-rust--wx-group-qr.png)
 
 Issues：https://github.com/sa-tokens/sa-token-rust/issues
 
